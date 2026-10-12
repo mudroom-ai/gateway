@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in gateway does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Security issues do not go here; see [SECURITY.md](https://github.com/mudroom-ai/gateway/blob/main/SECURITY.md). Remove tokens, keys and customer details from anything you paste.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The tag from package.json, or the output of `git rev-parse --short HEAD`.
+      placeholder: "0.1.0 or 421d3f4"
+    validations:
+      required: true
+  - type: dropdown
+    id: connector
+    attributes:
+      label: Connector
+      options:
+        - google
+        - square
+        - glossgenius
+        - slack
+        - twilio
+        - none
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - install.sh
+        - Docker
+        - Railway
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The requests or commands you ran, in order.
+      placeholder: |
+        1. npm start
+        2. curl -s localhost:3000/api/services
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      description: What you expected to happen, and what happened instead (include the error body if there was one).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant gateway output. Redact secrets.
+      render: shell
+    validations:
+      required: false

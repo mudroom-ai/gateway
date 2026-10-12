@@ -1,0 +1,63 @@
+{
+  "merchant_id": "example-groomer",
+  "name": "Example Dog Grooming",
+  "timezone": "America/Los_Angeles",
+  "currency": "USD",
+  "services": [
+    {
+      "id": "bath",
+      "name": "Bath and brush",
+      "description": "Bath, blow-dry and brush-out for one dog.",
+      "duration_min": 60,
+      "buffer_min": 15,
+      "price_cents": 6500
+    },
+    {
+      "id": "full-groom",
+      "name": "Full groom",
+      "duration_min": 120,
+      "buffer_min": 15,
+      "price_cents": 11000
+    }
+  ],
+  "hours": {
+    "mon": [],
+    "tue": [{ "start": "09:00", "end": "17:00" }],
+    "wed": [{ "start": "09:00", "end": "17:00" }],
+    "thu": [{ "start": "09:00", "end": "17:00" }],
+    "fri": [{ "start": "09:00", "end": "17:00" }],
+    "sat": [{ "start": "10:00", "end": "15:00" }],
+    "sun": []
+  },
+  "default_buffer_min": 15,
+  "blackout_days": ["2026-12-25"],
+  "discounts": [
+    {
+      "id": "weekday-afternoon",
+      "label": "Weekday afternoon 10% off",
+      "pct": 10,
+      "days_of_week": ["tue", "wed", "thu", "fri"],
+      "time_of_day": { "start": "13:00", "end": "17:00" }
+    },
+    {
+      "id": "last-minute",
+      "label": "Starts within 24 hours, 15% off",
+      "pct": 15,
+      "days_of_week": ["tue", "wed", "thu", "fri"],
+      "starts_within_hours": 24
+    }
+  ],
+  "max_total_discount_pct": 20,
+  "floor_cents": 5000,
+  "quote_ttl_min": 15,
+  "limits": {
+    "max_window_days": 14,
+    "max_flexibility_min": 240,
+    "connector_timeout_ms": 8000,
+    "per_ip_per_min": 60,
+    "per_key_per_min": 600,
+    "per_contact_per_hour": 10,
+    "max_open_bookings_per_contact": 3
+  },
+  "booking_enabled": true
+}

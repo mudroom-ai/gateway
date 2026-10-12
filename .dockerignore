@@ -1,0 +1,17 @@
+.git
+.gitignore
+.claude
+node_modules
+dist
+test
+docs
+*.md
+# runtime state and secrets never go into the image
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.*
+service-account*.json
+*-key.json
+config.json

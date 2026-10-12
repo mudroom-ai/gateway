@@ -1,0 +1,58 @@
+{
+  "name": "gateway",
+  "version": "0.1.0",
+  "description": "Open-source server that lets a business deal with AI agents: services, prices, booking and owner messages over HTTP.",
+  "keywords": [
+    "ai-agents",
+    "booking",
+    "appointments",
+    "square",
+    "google-calendar",
+    "llms-txt",
+    "openapi",
+    "self-hosted"
+  ],
+  "homepage": "https://github.com/mudroom-ai/gateway#readme",
+  "bugs": {
+    "url": "https://github.com/mudroom-ai/gateway/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mudroom-ai/gateway.git"
+  },
+  "license": "Apache-2.0",
+  "author": "Dennis Chia",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "dist",
+    "config.example.json",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsx watch src/server.ts",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "init": "node --env-file-if-exists=.env dist/cli/init.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "luxon": "^3.7.2",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/luxon": "^3.7.6",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

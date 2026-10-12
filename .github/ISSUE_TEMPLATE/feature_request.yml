@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a change that helps agents or merchants.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The agent or merchant problem
+      description: What is an agent or a merchant trying to do that gateway does not let them do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What the API, connector or setup should do. Request and response shapes help.
+    validations:
+      required: true
+  - type: dropdown
+    id: connector
+    attributes:
+      label: Connector affected
+      options:
+        - google
+        - square
+        - glossgenius
+        - slack
+        - twilio
+        - none (core or API)
+        - a new connector
+    validations:
+      required: true
