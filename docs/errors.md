@@ -35,6 +35,7 @@ Every route returns the same error body:
 | `no_slot` | 422 | no | No free slot in the window; `alternatives` may be included |
 | `over_budget` | 422 | no | No slot at or under the agent's `max_price_cents` |
 | `blocked_by_rule` | 422 | no | An owner rule (blackout, hours, floor) refuses the slot |
+| `service_not_bookable` | 422 | no | `find_slots` / `quote` with the id of an ask-the-owner service (`ask_services` in `GET /api/services`): offered, but with no fixed price or duration to book. Send `leave_message` with that `service_id` when `/llms.txt` lists `POST /api/messages`; otherwise tell the user to contact the business |
 | `rate_limited` | 429 | yes | Per-IP or per-key limit, a contact's hourly limit, or the merchant-wide `max_messages_per_hour`; wait `retry_after_s` |
 | `calendar_unavailable` | 503 | yes | The booking system timed out or returned 5xx; wait `retry_after_s` |
 | `calendar_auth_failed` | 503 | no | Credentials or calendar sharing are wrong; the message carries a fix hint for the merchant |

@@ -104,6 +104,11 @@ export function computeSlots(service: Service, config: Config, range: MsInterval
   return out;
 }
 
+/** One text for every message mode: the agent checks /llms.txt itself, so the error never has to know the mode. */
+export function notBookableMessage(name: string): string {
+  return `"${name}" is offered but cannot be booked online (no fixed price or duration). If /llms.txt lists POST /api/messages, send the owner a message with this service_id; otherwise tell the user to contact the business.`;
+}
+
 export async function findSlots(req: FindSlotsRequest, deps: FindSlotsDeps): Promise<Result<FindSlotsResult>> {
   const { config, connector } = deps;
   const limits = config.limits;
@@ -118,7 +123,12 @@ export async function findSlots(req: FindSlotsRequest, deps: FindSlotsDeps): Pro
   } catch (e) {
     return connectorErr(e, "service lookup");
   }
-  if (!service) return err("unknown_service", `Unknown service "${req.service_id}". Call list_services for valid ids.`);
+  if (!service) {
+    // Not bookable, so an ask-the-owner entry with this id cannot be shadowed by a bookable one.
+    const ask = config.ask_services.find((a) => a.id === req.service_id);
+    if (ask) return err("service_not_bookable", notBookableMessage(ask.name));
+    return err("unknown_service", `Unknown service "${req.service_id}". Call list_services for valid ids.`);
+  }
 
   const ws = parseRfc3339(req.window.start);
   const we = parseRfc3339(req.window.end);

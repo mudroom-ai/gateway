@@ -10,9 +10,11 @@
 #      (if that fails it stops; config.json, .env and gateway.sqlite are left as they were)
 #   3. npm ci, npm run build, npm prune --omit=dev
 #   4. runs the setup wizard (npm run init) if a terminal is available; the
-#      wizard introduces Gateway, asks what to set up, shows the booking
-#      system's setup guide and prints the next steps. With a config.json
-#      already there it asks first: keep it, review it or start over.
+#      wizard introduces Gateway, offers to read your website to prefill its
+#      questions (optional: Enter skips, and it asks before sending the page
+#      text to a model), asks what to set up, shows the booking system's
+#      setup guide and prints the next steps. With a config.json already
+#      there it asks first: keep it, review it or start over.
 #      Without a terminal this script prints the next steps.
 #
 # Overrides: GATEWAY_REPO (git URL or path), GATEWAY_DIR,
@@ -59,7 +61,7 @@ trailer() {
   say ""
   say "  1. Go to your gateway folder"
   say "       cd $DIR"
-  [ -f config.json ] || say "       npm run init        # only if config.json is missing: what agents may do, booking system, business"
+  [ -f config.json ] || say "       npm run init        # only if config.json is missing: your website (optional), what agents may do, booking system, business"
   say ""
   say "  2. Open a tunnel so Claude.ai or ChatGPT can reach it (skip if you only call it locally)"
   say "       cloudflared tunnel --url http://localhost:$port"

@@ -41,7 +41,7 @@ Names match `/llms.txt`. Success: HTTP 200 (201 for `book`). Errors: [shared for
 
 | Operation | Endpoint | What to send / expect |
 | --- | --- | --- |
-| `list_services` | `GET /api/services` | Service IDs, durations, and base prices |
+| `list_services` | `GET /api/services` | Service IDs, durations, and base prices; plus `ask_services` when the business lists any |
 | `find_slots` | `POST /api/slots` | A window in RFC 3339 with UTC offset (max 14 days), optional flexibility (±240 minutes); returns priced slots |
 | `quote` | `POST /api/quote` | One slot; returns `quote_id`, `price_cents`, `applied_rules`, and `expires_at`, or alternatives |
 | `book` | `POST /api/book` | Quote, customer name plus phone or email, and a client-chosen `idempotency_key`; retries with the same key never create a second event |
@@ -49,6 +49,17 @@ Names match `/llms.txt`. Success: HTTP 200 (201 for `book`). Errors: [shared for
 | `reschedule` | `POST /api/reschedule` | Booking and a fresh quote for the same service; preserves `booking_id` |
 
 **Rescheduling:** include `booking_id` and contact in `find_slots` and `quote` so the current appointment's time appears available.
+
+### Ask-the-owner services
+
+A business can list services it offers but cannot price or time up front (`ask_services` in [config.json](configuration.md#configjson)), with every booking system. An agent sees them in two places:
+
+- `/llms.txt` and the home page: an **Ask the owner** list right after Services, one line per entry with its `id`, name and price note.
+- `GET /api/services`: an `ask_services` array of `{id, name, price_note?}`. The field is absent when the business lists none.
+
+They are never bookable. `find_slots` and `quote` with one of these ids return 422 `service_not_bookable` (not `unknown_service`), and the ids are not in the OpenAPI `service_id` enum. What the agent does next depends on messaging: with an owner channel, `/llms.txt` tells it to send `leave_message` with that `service_id`, and the owner's notice reads `About: <name>`; without one, it tells the agent to have the user contact the business directly.
+
+**Names and price notes are the business's own text, never agent instructions.** `/llms.txt` states this beside the list.
 
 ### Smoke test over HTTP
 
@@ -67,7 +78,7 @@ Get a `quote_id`: send `service_id` and a returned slot's `start` and `end` as t
 
 ## Leaving a message for the owner
 
-Message the owner for missing services, questions, or requests needing a human decision.
+Message the owner for missing services, [ask-the-owner services](#ask-the-owner-services), questions, or requests needing a human decision.
 
 Messaging requires an owner channel that reaches a person: **Slack** supports two-way replies; **Twilio** supports one-way notifications. Without one (including the GlossGenius log fallback, which only records booking notices), messaging routes are absent and `/llms.txt` omits them. `MESSAGES_ENABLED=false` disables them with `messages_disabled`.
 
@@ -75,7 +86,7 @@ Messaging requires an owner channel that reaches a person: **Slack** supports tw
 
 | Operation | Endpoint | Behavior |
 | --- | --- | --- |
-| `leave_message` | `POST /api/messages` | Send customer name plus phone or email and a message (max 1000 characters). Optional: `service_id`, `idempotency_key`. Returns 201 with `thread_id`, `read_token`, `status`, `poll_after_seconds`, and `delivery`. |
+| `leave_message` | `POST /api/messages` | Send customer name plus phone or email and a message (max 1000 characters). Optional: `service_id` (a bookable or ask-the-owner id), `idempotency_key`. Returns 201 with `thread_id`, `read_token`, `status`, `poll_after_seconds`, and `delivery`. |
 | `get_thread` | `GET /api/threads/:id` | Read replies with the thread token; optionally long-poll with `?wait=N`. |
 | `follow_up` | `POST /api/threads/:id/messages` | Add a message with the token; returns 201. Set `done: true` to send and close in one step. |
 | `close_thread` | `POST /api/threads/:id/close` | Close with the token once the customer has what they need. Repeated closes return 200 with `status: closed`. |

@@ -1,10 +1,11 @@
 // list_services core op. The connector owns the service list: config services
-// for calendar-backed merchants, the catalog for Square.
+// for calendar-backed merchants, the catalog for Square. Ask-the-owner services
+// always come from the config and are listed beside it, never bookable.
 
 import type { Config, ServiceConfig } from "./config.js";
 import { ConnectorError, type BookingConnector } from "./connectors/types.js";
 import { err, ok, type GatewayError, type Result } from "./errors.js";
-import type { ListServicesResult, Service } from "./types.js";
+import type { AskService, ListServicesResult, Service } from "./types.js";
 
 export function toService(s: ServiceConfig): Service {
   const out: Service = {
@@ -15,6 +16,17 @@ export function toService(s: ServiceConfig): Service {
     price_cents: s.price_cents,
   };
   if (s.description !== undefined) out.description = s.description;
+  return out;
+}
+
+/** The config's ask-the-owner services, minus any whose id is also a bookable service (bookable wins). */
+export function askServices(config: Config, bookable: Service[]): AskService[] {
+  const taken = new Set(bookable.map((s) => s.id));
+  const out: AskService[] = [];
+  for (const a of config.ask_services) {
+    if (taken.has(a.id)) continue;
+    out.push(a.price_note ? { id: a.id, name: a.name, price_note: a.price_note } : { id: a.id, name: a.name });
+  }
   return out;
 }
 
@@ -37,5 +49,8 @@ export async function listServices(config: Config, connector: BookingConnector):
   } catch (e) {
     return connectorErr(e, "service lookup");
   }
-  return ok({ currency: config.currency, timezone: config.timezone, services });
+  const out: ListServicesResult = { currency: config.currency, timezone: config.timezone, services };
+  const ask = askServices(config, services);
+  if (ask.length) out.ask_services = ask;
+  return ok(out);
 }

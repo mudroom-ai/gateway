@@ -33,6 +33,7 @@ export const ERROR_CODES = [
   "no_slot",
   "over_budget",
   "blocked_by_rule",
+  "service_not_bookable", // an ask-the-owner service: listed, but no fixed price or duration to book
   // 429
   "rate_limited",
   "contact_limit_reached", // per-contact open-booking cap
@@ -88,6 +89,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   no_slot: 422,
   over_budget: 422,
   blocked_by_rule: 422,
+  service_not_bookable: 422,
   rate_limited: 429,
   contact_limit_reached: 409, // not 429: waiting won't clear it, and 429 invites auto-retry
   calendar_unavailable: 503,

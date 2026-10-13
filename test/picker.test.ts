@@ -140,6 +140,14 @@ describe("pick() on a raw-mode terminal", () => {
     const esc = fakeTty();
     esc.type("\x1b[B", "\x1b"); // move, then ESC
     expect(await pick("Q", ITEMS, 0, { io: esc.io, color: false })).toBe(0);
+    expect(esc.stdout.out).toContain("ESC keep default");
+
+    // With a cancel row, ESC answers with it instead of the default, and the hint names it.
+    const back = fakeTty();
+    back.type("\x1b");
+    expect(await pick("Q", ITEMS, 0, { io: back.io, color: false, cancel: 1 })).toBe(1);
+    expect(back.stdout.out).toContain(`ESC ${ITEMS[1]!.label.toLowerCase()}`);
+    expect(back.stdout.out).not.toContain("ESC keep default");
 
     const jump = fakeTty();
     jump.type("9", "x", "2", "\r"); // 9 is out of range for 2 items, x is not a key, 2 jumps to the second row

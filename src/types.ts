@@ -28,6 +28,14 @@ export interface Service {
   price_cents: Cents;
 }
 
+/** Offered by the business but not bookable through the API (no fixed price or duration); agents message the owner about it. */
+export interface AskService {
+  id: string;
+  name: string;
+  /** The business's own price wording, e.g. "from $80". */
+  price_note?: string;
+}
+
 /** A bookable start for one service. `end` = start + duration (buffer excluded). */
 export interface Slot {
   service_id: string;
@@ -103,6 +111,8 @@ export interface ListServicesResult {
   currency: string;
   timezone: string;
   services: Service[];
+  /** Present only when the business lists any. */
+  ask_services?: AskService[];
 }
 
 /**
