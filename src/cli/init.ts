@@ -7,12 +7,15 @@
 // text to the merchant about each agent booking, cancel and reschedule.
 // Built-ins only, plus Luxon/Zod already in deps.
 //
-// Interactive by default: a first run opens with a short introduction, offers
-// to read the merchant's website and use what it finds as the default answers
-// (src/cli/init-website.ts), asks what agents should do (GOAL_ITEMS) and which
-// booking system is in use, shows that system's setup guide (SETUP_GUIDES),
+// Interactive by default. The first question asks whether to continue in the
+// terminal or complete setup in a browser on this machine (src/cli/setup-mode.ts,
+// src/cli/setup-server.ts). Either way a first run opens with a short introduction,
+// offers to read the merchant's website and use what it finds as the default
+// answers (src/cli/init-website.ts), asks what agents should do (GOAL_ITEMS) and
+// which booking system is in use, shows that system's setup guide (SETUP_GUIDES),
 // then connects it or stops there.
 // `--non-interactive` reads answers from flags/env (see --help), for scripts and tests.
+// `--web` skips the first question and opens the browser.
 
 import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -55,6 +58,8 @@ import {
 import { docUrl, openBrowser, showGuide, type SetupGuide } from "./guide.js";
 import { askWebsite, type WebsiteDeps } from "./init-website.js";
 import { pick, style, type PickItem } from "./picker.js";
+import { askSetupMode } from "./setup-mode.js";
+import { startSetupServer, type WebSetup } from "./setup-server.js";
 import { cleanLine } from "./profile.js";
 import { readSecret } from "./secret.js";
 
@@ -136,7 +141,9 @@ const HELP = `Usage: npm run init [-- options]
 
 Writes config.json and .env in the current directory (or --dir), then checks
 access to Google Calendar, Square Appointments or GlossGenius. config.json follows CONFIG_PATH
-when it is set. A first run starts with a short introduction and offers to read
+when it is set. An interactive run asks first whether to continue in the terminal or complete
+setup in a browser on this machine; the questions and the files are the same either way.
+A first run starts with a short introduction and offers to read
 your website (Enter skips) so the later questions start from what it says. It then
 asks what agents should do and which booking system you use, shows what that system
 needs (with a link to its guide) and asks whether you are ready to connect; "Not yet"
@@ -146,6 +153,9 @@ whether to keep the setup as it is, review and update it, or start over.
 
 Options (env fallback in brackets, used with --non-interactive):
   --non-interactive        Take answers from flags/env; never prompt
+  --web                    Open the same questions in a browser on this machine.
+                           Without this flag, an interactive run asks first whether
+                           to continue in the terminal or complete setup in the browser
   --force                  Start over: overwrite an existing config.json / .env
   --dir <path>             Where to write the files (default: current directory)
   --website <url>          First run or "Start over" only: answers the website question, e.g. example.com.
@@ -606,14 +616,14 @@ function ttyPrompter(): Prompter {
   };
 }
 
-/** Ask until `parse` accepts the answer. */
-async function askValid<T>(p: Prompter, q: string, def: string | undefined, parse: (s: string) => T, shown?: string): Promise<T> {
+/** Ask until `parse` accepts the answer. Failures go to `log` so the browser page shows them too. */
+async function askValid<T>(log: (m: string) => void, p: Prompter, q: string, def: string | undefined, parse: (s: string) => T, shown?: string): Promise<T> {
   for (;;) {
     const a = await p.ask(q, def, shown);
     try {
       return parse(a);
     } catch (e) {
-      console.log(`  ${(e as Error).message}`);
+      log(`  ${(e as Error).message}`);
     }
   }
 }
@@ -691,11 +701,15 @@ export interface InitDeps {
   prompter?: Prompter;
   /** The website step's crawl, model detection and model call (tests script them); default: the real ones. */
   website?: WebsiteDeps | undefined;
+  /** Browser setup (tests substitute a fake). Default: a page on 127.0.0.1. */
+  startWebSetup?: (opts: { openUrl?: ((url: string) => void) | undefined }) => Promise<WebSetup>;
 }
 
 export async function runInit(argv: string[], deps: InitDeps = {}): Promise<number> {
   const env = deps.env ?? process.env;
-  const log = deps.log ?? ((m: string) => console.log(m));
+  let sink = deps.log ?? ((m: string) => console.log(m));
+  const log = (m: string) => sink(m);
+  const askChecked = <T>(p: Prompter, q: string, def: string | undefined, parse: (s: string) => T, shown?: string) => askValid(log, p, q, def, parse, shown);
   const makeConnector = deps.makeConnector ?? defaultFactory;
   const makeSquare = deps.makeSquare ?? defaultSquareFactory;
   const makeGlossGenius = deps.makeGlossGenius ?? defaultGlossGeniusFactory;
@@ -732,6 +746,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       "slack-owner-ids": { type: "string" },
       "callback-port": { type: "string" },
       port: { type: "string" },
+      web: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -785,6 +800,16 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   let backend: Backend | undefined;
   let doWriteTest = false;
   let p: Prompter | undefined;
+  let webSession: WebSetup | undefined;
+  const finish = async (code: number): Promise<number> => {
+    if (!webSession) return code;
+    log(code === 0 ? "\nSetup finished. Close the browser tab, or press Enter here to exit." : "\nSetup stopped. Close the browser tab, or press Enter here to exit.");
+    webSession.markDone(code === 0);
+    await webSession.waitForExit();
+    await webSession.close();
+    webSession = undefined;
+    return code;
+  };
   // Resume (interactive, no --force): the saved files are the starting point.
   let saved: Config | undefined;
   let savedEnv: Record<string, string> | undefined;
@@ -798,6 +823,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       if (existing.length && !f.force) throw new Error(`${existing.join(" and ")} already exist(s); pass --force to overwrite`);
       // No website step here: nothing read from a site reaches config.json without someone confirming it at a prompt.
       if (f.website !== undefined) log("Note: --website is ignored with --non-interactive.");
+      if (f.web) log("Note: --web is ignored with --non-interactive.");
       const specs = f.service?.length ? f.service : (env.GATEWAY_SERVICES ?? "").split(";").filter((s) => s.trim());
       const ggUrl = f.square || f["no-backend"] || f["skip-google"] ? undefined : (f["glossgenius-url"] ?? env.GLOSSGENIUS_BOOKING_URL)?.trim() || undefined;
       if (!specs.length && !f.square && !ggUrl) throw new Error("at least one --service is required");
@@ -841,10 +867,24 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       else if (channels.owner || channels.slack) log("Note: owner channel settings ignored: there is no booking system to report on.");
       doWriteTest = !!f["write-test"];
     } else {
-      if (!deps.prompter && !process.stdin.isTTY) throw new Error("no terminal to prompt on; run it in a terminal or pass --non-interactive (see --help)");
+      if (!deps.prompter && !f.web && !process.stdin.isTTY) throw new Error("no terminal to prompt on; run it in a terminal, pass --web, or pass --non-interactive (see --help)");
       if (!f.force) ({ config: saved, env: savedEnv } = loadExisting(dir, configPath));
       const known = (k: string) => env[k] ?? savedEnv?.[k];
-      p = deps.prompter ?? ttyPrompter();
+      if (deps.prompter) {
+        p = deps.prompter;
+      } else if (f.web || (await askSetupMode(ttyPrompter())) === "web") {
+        const session = await (deps.startWebSetup ?? ((opts) => startSetupServer(opts)))({ openUrl: deps.openUrl });
+        webSession = session;
+        const terminal = sink;
+        sink = (m: string) => {
+          terminal(m);
+          session.pushLog(m);
+        };
+        terminal(`\nOpening the setup page. Leave this terminal open until setup finishes.\n${session.url}\n`);
+        p = session.prompter;
+      } else {
+        p = ttyPrompter();
+      }
       const ask = p;
       const found = [saved ? configPath : "", savedEnv ? envPath : ""].filter(Boolean);
       if (found.length) {
@@ -857,7 +897,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           log("\nKept your setup; nothing was changed.");
           if (connected) log(startSteps());
           else log("No booking system is connected yet, so the gateway will not start. Run `npm run init` again and pick \"Review and update\" to connect one.");
-          return 0;
+          return await finish(0);
         }
         if (existing === EXISTING_RESET) saved = savedEnv = undefined;
         log("");
@@ -918,13 +958,13 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         if (notReady) log("Nothing is connected for now. The next answers are saved, so `npm run init` starts from them next time.");
       }
       log("");
-      const name = await askValid(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
+      const name = await askChecked(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
       const siteZone = (f.timezone ?? saved?.timezone) === undefined ? site?.timezone : undefined;
       if (siteZone && siteZone !== localZone) log(`Your site points to the time zone ${cleanLine(siteZone, 64)}; this machine is set to ${localZone}.`);
       // After a site was read, a default that is only this machine's zone is labelled as such: it follows the site's summary and could be taken for the site's.
       const zoneKnown = f.timezone ?? saved?.timezone ?? siteZone;
-      const timezone = await askValid(p, "Time zone", zoneKnown ?? localZone, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
-      const currency = await askValid(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
+      const timezone = await askChecked(p, "Time zone", zoneKnown ?? localZone, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
+      const currency = await askChecked(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
       // Square and GlossGenius set services, prices and hours themselves. Not ready, they are asked on the next
       // run, unless the website step found services or hours: those are asked about now, or the reading is lost.
       const store = useSquare || useGlossGenius;
@@ -940,9 +980,9 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         }
         return {
           name: sname,
-          duration_min: await askValid(ask, "    Duration (minutes)", String(prev?.duration_min ?? 60), (s) => parseIntIn(s, "duration", 1, 1440)),
-          buffer_min: await askValid(ask, "    Buffer after (minutes)", String(prev?.buffer_min ?? 0), (s) => parseIntIn(s, "buffer", 0, 1440)),
-          price_cents: await askValid(ask, `    Price (${currency})`, prev ? (prev.price_cents / 100).toFixed(2) : "0", parsePriceCents),
+          duration_min: await askChecked(ask, "    Duration (minutes)", String(prev?.duration_min ?? 60), (s) => parseIntIn(s, "duration", 1, 1440)),
+          buffer_min: await askChecked(ask, "    Buffer after (minutes)", String(prev?.buffer_min ?? 0), (s) => parseIntIn(s, "buffer", 0, 1440)),
+          price_cents: await askChecked(ask, `    Price (${currency})`, prev ? (prev.price_cents / 100).toFixed(2) : "0", parsePriceCents),
         };
       };
       const services: ServiceAnswer[] = [];
@@ -1003,7 +1043,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       if (!platform) {
         log('\nOpening hours, e.g. "mon-fri 09:00-17:00; sat 10:00-14:00". Unlisted days are closed.');
         // The site's hours are a default for this prompt only: where hours are not asked they are never written.
-        hours = await askValid(p, "Hours", hoursKept ?? site?.hours ?? DEFAULT_HOURS, (s) => {
+        hours = await askChecked(p, "Hours", hoursKept ?? site?.hours ?? DEFAULT_HOURS, (s) => {
           parseHours(s);
           return s;
         });
@@ -1016,10 +1056,10 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           log(style.dim("\nSquare: create an application at https://developer.squareup.com/console/en/apps, and on its OAuth page set the"));
           log(style.dim(`Redirect URL to ${callbackUrl(callbackPort)} (Sandbox or Production, matching the environment below).`));
         } else log(style.dim("\nSquare: the Redirect URL goes on the Sandbox or Production tab, matching the environment below."));
-        const sqEnv = await askValid(p, "Square environment (sandbox or production)", f["square-env"] ?? known("SQUARE_ENV") ?? "production", validSquareEnv);
-        const appId = await askValid(p, "Application ID", f["square-app-id"] ?? known("SQUARE_APP_ID"), nonEmpty("Application ID"));
+        const sqEnv = await askChecked(p, "Square environment (sandbox or production)", f["square-env"] ?? known("SQUARE_ENV") ?? "production", validSquareEnv);
+        const appId = await askChecked(p, "Application ID", f["square-app-id"] ?? known("SQUARE_APP_ID"), nonEmpty("Application ID"));
         const secretFromEnv = known("SQUARE_APP_SECRET")?.trim() || undefined;
-        const appSecret = await askValid(p, "Application secret", secretFromEnv, nonEmpty("Application secret"), secretFromEnv ? "from .env" : undefined);
+        const appSecret = await askChecked(p, "Application secret", secretFromEnv, nonEmpty("Application secret"), secretFromEnv ? "from .env" : undefined);
         const tokens = await squareAuthorize({ appId, appSecret, env: sqEnv }, callbackPort, oauth, log);
         log("Square authorised.");
         const locations = await oauth.listLocations(sqEnv, tokens.accessToken);
@@ -1037,21 +1077,21 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         backend = { kind: "square", env: sqEnv, accessToken: tokens.accessToken, locationId: loc.id, refreshToken: tokens.refreshToken, appId, appSecret };
       } else if (useGlossGenius) {
         if (!guided) log(style.dim("\nGlossGenius: open GlossGenius -> Online Booking -> Share booking link, and copy the https://<yourname>.glossgenius.com link."));
-        const bookingUrl = await askValid(p, "Booking page URL", f["glossgenius-url"] ?? known("GLOSSGENIUS_BOOKING_URL") ?? siteBookingUrl(vendor), validGlossGeniusUrl);
+        const bookingUrl = await askChecked(p, "Booking page URL", f["glossgenius-url"] ?? known("GLOSSGENIUS_BOOKING_URL") ?? siteBookingUrl(vendor), validGlossGeniusUrl);
         log(style.dim("\nAgent bookings are written to a Google Calendar you share with a service account (see docs/connectors/google.md)."));
-        const keyFile = await askValid(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
-        const calendarId = await askValid(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
+        const keyFile = await askChecked(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
+        const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
         backend = { kind: "glossgenius", bookingUrl, keyFile, calendarId };
       } else {
         log(style.dim("\nGoogle Calendar (service account key + shared calendar; see docs/connectors/google.md)."));
-        const keyFile = await askValid(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
-        const calendarId = await askValid(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
+        const keyFile = await askChecked(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
+        const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
         backend = { kind: "google", keyFile, calendarId };
       }
       // Owner channel (none, Slack or Twilio), for any booking system: src/cli/init-channel.ts.
       // Asked for the "message me" goal, and always for GlossGenius, whose bookings are otherwise only logged.
       if (backend && (goal === GOAL_MESSAGE || backend.kind === "glossgenius")) {
-        Object.assign(backend, await askOwnerChannel(p, { known, flags: f, log, glossgenius: backend.kind === "glossgenius", askValid, preferSlack: goal === GOAL_MESSAGE, guide: guideIO }));
+        Object.assign(backend, await askOwnerChannel(p, { known, flags: f, log, glossgenius: backend.kind === "glossgenius", askValid: askChecked, preferSlack: goal === GOAL_MESSAGE, guide: guideIO }));
       } else if (backend) {
         // Not asked: a channel already in .env stays as it is.
         try {
@@ -1164,10 +1204,10 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   } catch (e) {
     if ((e as { code?: string }).code === "ABORT_ERR") {
       log("\nAborted.");
-      return 1;
+      return await finish(1);
     }
     log(`error: ${(e as Error).message}`);
-    return 1;
+    return await finish(1);
   } finally {
     p?.close();
   }
@@ -1175,11 +1215,11 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   if (!backend && !keptBackend) {
     // --non-interactive --no-backend names no system: point at Google, the one that needs nothing but a calendar.
     log(setupSteps(SETUP_GUIDES[planned ?? "google"](callbackPort)));
-    return 0;
+    return await finish(0);
   }
 
   log(startSteps());
-  return 0;
+  return await finish(0);
 }
 
 const entry = process.argv[1] ? realpathSync(process.argv[1]) : "";

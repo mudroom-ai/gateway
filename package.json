@@ -35,7 +35,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && rm -rf dist/cli/setup-ui && cp -R src/cli/setup-ui dist/cli/setup-ui",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "dev": "tsx watch src/server.ts",
