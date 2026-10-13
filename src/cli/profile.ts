@@ -25,7 +25,9 @@ import { IANAZone } from "luxon";
 import type { CrawlResult, SiteVendor } from "./website.js";
 
 // "opencode" stays in the union for a later release: it could not be shown to answer with its tools off, so detectLlm never returns it and extractWithLlm rejects it.
-export type LlmKind = "claude" | "codex" | "opencode" | "anthropic" | "openai";
+export type LlmKind = "claude" | "codex" | "opencode" | "anthropic" | "openai" | "deepseek";
+/** The kinds reached with an API key instead of a local CLI. */
+export type KeyKind = keyof typeof KEYS;
 
 export interface LlmCandidate {
   kind: LlmKind;
@@ -112,7 +114,7 @@ export const LLM_ERRORS = {
   http: (status: number): string => {
     const n = Number.isInteger(status) ? status : 0;
     if (n === 401 || n === 403) return `The API key was not accepted (HTTP ${n}).`;
-    if (n === 429) return `The API account is rate limited or out of credit (HTTP ${n}).`;
+    if (n === 402 || n === 429) return `The API account is rate limited or out of credit (HTTP ${n}).`;
     return `The API returned an error (HTTP ${n}).`;
   },
 } as const;
@@ -129,6 +131,7 @@ const CLIS: readonly { kind: "claude" | "codex"; label: string }[] = [
 const KEYS = {
   anthropic: { label: "Anthropic API key", env: "ANTHROPIC_API_KEY" },
   openai: { label: "OpenAI API key", env: "OPENAI_API_KEY" },
+  deepseek: { label: "DeepSeek API key", env: "DEEPSEEK_API_KEY" },
 } as const;
 
 /** The absolute path of an executable called `name` in an absolute PATH entry. A relative entry would resolve against whatever directory the wizard was started in. */
@@ -155,7 +158,7 @@ export function detectLlm(env: NodeJS.ProcessEnv): LlmCandidate[] {
     const bin = onPath(cli.kind, env);
     if (bin) found.push({ kind: cli.kind, label: cli.label, status: CLI_STATUS, bin });
   }
-  for (const kind of ["anthropic", "openai"] as const) {
+  for (const kind of Object.keys(KEYS) as KeyKind[]) {
     const apiKey = (env[KEYS[kind].env] ?? "").trim();
     if (apiKey) found.push({ kind, label: KEYS[kind].label, status: `from ${KEYS[kind].env}`, apiKey });
   }
@@ -163,7 +166,7 @@ export function detectLlm(env: NodeJS.ProcessEnv): LlmCandidate[] {
 }
 
 /** A candidate for a key the merchant pasted. The key is used for this run and belongs in no file or log. */
-export function keyCandidate(kind: "anthropic" | "openai", apiKey: string): LlmCandidate {
+export function keyCandidate(kind: KeyKind, apiKey: string): LlmCandidate {
   return { kind, label: KEYS[kind].label, status: "pasted", apiKey: apiKey.trim() };
 }
 
@@ -171,7 +174,7 @@ export function keyCandidate(kind: "anthropic" | "openai", apiKey: string): LlmC
 
 const nullable = { type: ["string", "null"] };
 
-// Written by hand and sent as is to all four providers: the two CLIs were
+// Written by hand and sent as is to all five providers: the two CLIs were
 // tested with exactly these keywords. buildProfile reads only name, timezone,
 // currency and hours from `business`, how_customers_book from `booking_system`
 // (only "online_store"), and name, kind (only "product"), evidence, price_text,
@@ -497,6 +500,39 @@ async function viaOpenai(apiKey: string, prompt: string, doFetch: typeof fetch):
   return parseJson(str(answer.text));
 }
 
+const DEEPSEEK_MODEL = "deepseek-flash";
+
+async function viaDeepseek(apiKey: string, prompt: string, doFetch: typeof fetch): Promise<unknown> {
+  const res = await postJson(
+    doFetch,
+    "https://api.deepseek.com/chat/completions",
+    { authorization: `Bearer ${apiKey}` },
+    {
+      model: DEEPSEEK_MODEL,
+      max_tokens: 16_000,
+      reasoning_effort: "low",
+      messages: [
+        // JSON mode takes no schema, only valid JSON, so the schema travels in the prompt. buildProfile checks the answer either way.
+        { role: "system", content: `${SYSTEM}\nThe JSON object must match this JSON Schema:\n${SCHEMA_JSON}` },
+        { role: "user", content: prompt },
+      ],
+      response_format: { type: "json_object" },
+    },
+  );
+  const choice = record(list(res.choices)[0]);
+  if (choice.finish_reason === "content_filter") throw new LlmError(LLM_ERRORS.refused);
+  // JSON mode can come back empty, and a reply cut at max_tokens is not valid JSON.
+  const answer = str(record(choice.message).content);
+  if (choice.finish_reason === "length" || !answer.trim()) throw new LlmError(LLM_ERRORS.badAnswer);
+  return parseJson(answer);
+}
+
+const VIA_KEY: Record<KeyKind, (apiKey: string, prompt: string, doFetch: typeof fetch) => Promise<unknown>> = {
+  anthropic: viaAnthropic,
+  openai: viaOpenai,
+  deepseek: viaDeepseek,
+};
+
 /** Printable ASCII without spaces, so a pasted value cannot break out of its request header. */
 const API_KEY = /^[\x21-\x7e]{8,512}$/;
 
@@ -509,11 +545,11 @@ export async function extractWithLlm(c: LlmCandidate, crawl: CrawlResult, deps: 
   try {
     const prompt = buildPrompt(crawl);
     if (c.kind === "claude" || c.kind === "codex") return await viaCli(c, prompt, deps);
-    if (c.kind !== "anthropic" && c.kind !== "openai") throw new LlmError(LLM_ERRORS.unsupported);
+    if (c.kind === "opencode") throw new LlmError(LLM_ERRORS.unsupported);
     const apiKey = c.apiKey ?? "";
     if (!API_KEY.test(apiKey)) throw new LlmError(LLM_ERRORS.key);
     const doFetch = deps.fetch ?? fetch;
-    return await (c.kind === "anthropic" ? viaAnthropic(apiKey, prompt, doFetch) : viaOpenai(apiKey, prompt, doFetch));
+    return await VIA_KEY[c.kind](apiKey, prompt, doFetch);
   } catch (e) {
     throw e instanceof LlmError ? e : new LlmError(LLM_ERRORS.failed);
   }
