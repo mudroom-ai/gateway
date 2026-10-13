@@ -161,6 +161,19 @@ describe("init wizard: website step", () => {
     expect(parseEnv(readFileSync(join(r.dir, ".env"), "utf8")).GLOSSGENIUS_BOOKING_URL).toBe("https://example-studio.glossgenius.com");
   });
 
+  // protects: ESC at the provider picker backs out to Skip even though a detected model is the
+  //   pre-selected row, so the page text is sent only on an explicit pick.
+  // fails_when: the picker is called without Skip as its cancel row (ESC keeps the default and the
+  //   model is called).
+  // seam: InitDeps.website; the scripted prompter answers "<esc>" with the picker's cancel row.
+  it("ESC at the provider picker skips the model even when one is pre-selected", async () => {
+    const r = await wizard([], ["example.com", "<esc>", "", "", NOT_YET, "Example Co", "", ""], { ...reads(), extract: unexpected("extract") }); // site, provider (ESC), goal, system, ready, name, zone, currency
+    expect(r.code).toBe(0);
+    expect(r.prompter.remaining).toBe(0);
+    expect(r.prompter.prompts).toContain(`${PROVIDER_QUESTION} [Claude Code]`);
+    expect(r.out).not.toContain("Sending the page text");
+  });
+
   // protects: a site that cannot be read costs one fixed line and the wizard carries on by hand; a
   //   failure's own text is printed only when it is one of the crawl's fixed sentences.
   // fails_when: the crawl error escapes runInit, the provider picker still shows, or an arbitrary error

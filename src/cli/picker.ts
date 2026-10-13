@@ -22,6 +22,8 @@ export interface PickItem {
 export interface PickOptions {
   /** Lines shown between the title and the key hint. */
   description?: string[];
+  /** The row ESC answers with, when backing out must not mean the pre-selected row. Default: `def`. */
+  cancel?: number;
   /** Force colour on or off; default: follow the terminal (NO_COLOR, TERM=dumb, isTTY). */
   color?: boolean;
   /** Test hook: the raw-mode stream to read keys from and the stream to draw on. */
@@ -38,6 +40,8 @@ const GREEN = `${ESC}32m`;
 const YELLOW = `${ESC}33m`;
 
 export const PICK_HINT = "  ↑↓ navigate  ENTER/SPACE select  ESC keep default";
+/** The key hint when ESC answers with a row of its own (`cancel`), named by that row's label: "ESC skip". */
+const cancelHint = (label: string): string => PICK_HINT.replace("keep default", label.toLowerCase());
 
 export function shouldUseColor(stdout: { isTTY?: boolean } = process.stdout, env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.NO_COLOR !== undefined) return false;
@@ -67,10 +71,11 @@ export function itemText(item: PickItem): string {
 }
 
 /** The lines a picker frame is made of. `selected` is the pre-selected (default) row, `cursor` the highlighted one. */
-export function renderPicker(title: string, items: PickItem[], cursor: number, selected: number, opts: { color: boolean; description?: string[] }): string[] {
+export function renderPicker(title: string, items: PickItem[], cursor: number, selected: number, opts: { color: boolean; description?: string[]; cancel?: number }): string[] {
   const lines: string[] = [paint(title, BOLD + YELLOW, opts.color)];
   for (const d of opts.description ?? []) lines.push(paint(d, DIM, opts.color));
-  lines.push(paint(PICK_HINT, DIM, opts.color));
+  const cancelItem = opts.cancel !== undefined && opts.cancel !== selected ? items[opts.cancel] : undefined;
+  lines.push(paint(cancelItem ? cancelHint(cancelItem.label) : PICK_HINT, DIM, opts.color));
   lines.push("");
   items.forEach((item, i) => {
     const isCursor = i === cursor;
@@ -176,11 +181,12 @@ export function decodeKey(buf: string): PickKey {
 
 /**
  * Show the picker and resolve with the chosen index. ESC resolves with `def`
- * (the question is skipped, keeping the default), Ctrl+C exits the process
- * like it does on a readline prompt. On return the frame is erased and one
- * summary line is left in the transcript.
+ * (the question is skipped, keeping the default) unless `opts.cancel` names
+ * another row, Ctrl+C exits the process like it does on a readline prompt. On
+ * return the frame is erased and one summary line is left in the transcript.
  */
 export async function pick(title: string, items: PickItem[], def = 0, opts: PickOptions = {}): Promise<number> {
+  const cancel = opts.cancel !== undefined && opts.cancel >= 0 && opts.cancel < items.length ? opts.cancel : def;
   const stdin = opts.io?.stdin ?? process.stdin;
   const stdout = opts.io?.stdout ?? process.stdout;
   const env = opts.env ?? process.env;
@@ -197,7 +203,7 @@ export async function pick(title: string, items: PickItem[], def = 0, opts: Pick
     // Clip to the terminal width: a wrapped line takes two rows, which would
     // throw off the cursor-up count on the next redraw and leave old frames behind.
     const cols = Math.max(20, stdout.columns || 80);
-    const lines = renderPicker(title, items, cursor, def, { color, description: opts.description }).map((l) => clipToWidth(l, cols - 1));
+    const lines = renderPicker(title, items, cursor, def, { color, description: opts.description, cancel }).map((l) => clipToWidth(l, cols - 1));
     stdout.write((drawn ? `${ESC}${drawn}A${ESC}0J` : "") + lines.join("\n") + "\n");
     drawn = lines.length;
   };
@@ -235,7 +241,7 @@ export async function pick(title: string, items: PickItem[], def = 0, opts: Pick
           if (key.jump < items.length) cursor = key.jump;
         } else {
           cleanup();
-          resolve(key === "select" ? cursor : def);
+          resolve(key === "select" ? cursor : cancel);
           return;
         }
         draw();

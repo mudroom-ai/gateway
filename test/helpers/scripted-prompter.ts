@@ -34,11 +34,12 @@ export class ScriptedPrompter implements Prompter {
     return this.next(q, "boolean") as boolean;
   }
 
-  /** Answer with a 1-based number or a label; an empty string keeps the default, as Enter does. */
-  async choose(q: string, items: PickItem[], def = 0): Promise<number> {
+  /** Answer with a 1-based number or a label; an empty string keeps the default, as Enter does, and "<esc>" backs out, as ESC does. */
+  async choose(q: string, items: PickItem[], def = 0, _description?: string[], cancel?: number): Promise<number> {
     this.choices.push(items);
     const a = (this.next(`${q} [${items[def]!.label}]`, "string") as string).trim();
     if (!a) return def;
+    if (a === "<esc>") return cancel ?? def;
     const n = Number(a);
     if (Number.isInteger(n) && n >= 1 && n <= items.length) return n - 1;
     const i = items.findIndex((it) => it.label === a);

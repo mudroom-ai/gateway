@@ -364,11 +364,12 @@ describe("extractWithLlm", () => {
     expect(existsSync(call.o.cwd)).toBe(false);
   });
 
-  // protects: Codex is run read-only, without the user's config or a saved session, with the schema
-  //   and the answer in files inside the temp directory and the prompt on stdin.
-  // fails_when: a sandbox or isolation flag is dropped, or the prompt moves into the argument list.
+  // protects: Codex is run read-only with its shell, apps and web search turned off, without the user's
+  //   config or a saved session, with the schema and the answer in files inside the temp directory and
+  //   the prompt on stdin.
+  // fails_when: a sandbox, isolation or tool-off flag is dropped, or the prompt moves into the argument list.
   // seam: deps.runCli (the fake writes the answer file the way codex does).
-  it("runs Codex read-only and reads its answer file", async () => {
+  it("runs Codex read-only with its tools off and reads its answer file", async () => {
     const cli = scriptedCli(({ args, o }) => {
       expect(JSON.parse(readFileSync(args[args.indexOf("--output-schema") + 1]!, "utf8")).required).toContain("services");
       writeFileSync(args[args.indexOf("-o") + 1]!, JSON.stringify(model));
@@ -379,6 +380,8 @@ describe("extractWithLlm", () => {
     expect(out).toEqual(model);
     const { args, o } = cli.calls[0]!;
     expect(args.slice(0, 6)).toEqual(["exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-s", "read-only"]);
+    for (const feature of ["shell_tool", "unified_exec", "apps"]) expect(args[args.indexOf(feature) - 1]).toBe("--disable");
+    for (const override of ['web_search="disabled"', "mcp_servers={}", "features.view_image=false"]) expect(args[args.indexOf(override) - 1]).toBe("-c");
     expect(args.at(-1)).toBe("-");
     expect(args.join("\n")).not.toContain("Haircut");
     expect(args[args.indexOf("-o") + 1]!.startsWith(o.cwd)).toBe(true);

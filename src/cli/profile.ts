@@ -330,7 +330,21 @@ const CLAUDE_ARGS: readonly string[] = [
   SCHEMA_JSON,
 ];
 
-// Codex keeps a read-only shell, so this path relies on the scrubbed environment, the empty directory and buildProfile.
+// Codex has no single "no tools" switch, so each tool is turned off by name. With only the read-only sandbox it
+// still ran shell commands, read files and searched the web, which is a way out for anything a page talks it into
+// reading. The first three are `--disable`, which Codex rejects for a name it does not know: a Codex this cannot
+// lock down is not run. The rest are config overrides, which an older or newer Codex ignores when it lacks the feature.
+const CODEX_TOOLS_OFF: readonly string[] = [
+  ...["shell_tool", "unified_exec", "apps"].flatMap((feature) => ["--disable", feature]),
+  ...[
+    'web_search="disabled"',
+    "mcp_servers={}",
+    ...["plugins", "multi_agent", "view_image", "browser_use", "computer_use", "image_generation", "hooks", "goals", "sleep_tool", "skill_search", "tool_suggest", "memories"].map(
+      (feature) => `features.${feature}=false`,
+    ),
+  ].flatMap((override) => ["-c", override]),
+];
+
 const codexArgs = (schemaFile: string, outFile: string): string[] => [
   "exec",
   "--skip-git-repo-check",
@@ -338,6 +352,7 @@ const codexArgs = (schemaFile: string, outFile: string): string[] => [
   "--ignore-user-config",
   "-s",
   "read-only",
+  ...CODEX_TOOLS_OFF,
   "--output-schema",
   schemaFile,
   "-o",

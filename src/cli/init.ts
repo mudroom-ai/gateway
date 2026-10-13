@@ -567,8 +567,8 @@ export interface Prompter {
   /** `shown` replaces the default in the prompt (for secrets). */
   ask(q: string, def?: string, shown?: string): Promise<string>;
   confirm(q: string): Promise<boolean>;
-  /** Pick one of `items`; resolves with its index. `def` is pre-selected and is the answer to Enter/ESC. */
-  choose(q: string, items: PickItem[], def?: number, description?: string[]): Promise<number>;
+  /** Pick one of `items`; resolves with its index. `def` is pre-selected and is the answer to Enter, and to ESC unless `cancel` names the row ESC answers with. */
+  choose(q: string, items: PickItem[], def?: number, description?: string[], cancel?: number): Promise<number>;
   /** Masked input for a secret that is used once and not saved; "" when skipped (or when there is no terminal to hide it on). */
   secret(q: string): Promise<string>;
   close(): void;
@@ -595,8 +595,8 @@ function ttyPrompter(): Prompter {
     async confirm(q) {
       return /^y(es)?$/i.test(await question(`${style.question(q)} ${style.dim("[y/N]")}: `));
     },
-    async choose(q, items, def = 0, description) {
-      const i = await pick(q, items, def, { description });
+    async choose(q, items, def = 0, description, cancel) {
+      const i = await pick(q, items, def, { description, cancel });
       console.log(`${style.question(q)}: ${style.answer(`${items[i]!.emoji ? `${items[i]!.emoji} ` : ""}${items[i]!.label}`)}`);
       return i;
     },

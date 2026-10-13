@@ -125,7 +125,8 @@ export async function askWebsite(
     { emoji: "⏭", label: SKIP_LABEL },
   ];
   const skipAt = items.length - 1;
-  const choice = await p.choose(PROVIDER_QUESTION, items, candidates.length && !store ? 0 : skipAt);
+  // ESC backs out: it answers Skip, never the pre-selected provider, so the page text is only sent on an explicit pick.
+  const choice = await p.choose(PROVIDER_QUESTION, items, candidates.length && !store ? 0 : skipAt, undefined, skipAt);
   if (choice === skipAt) return crawlOnly;
   let candidate = candidates[choice];
   if (!candidate) {
