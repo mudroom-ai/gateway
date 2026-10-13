@@ -354,6 +354,7 @@ describe("detectLlm", () => {
 
     const both = detectLlm({ PATH: [other, bin].join(delimiter), OPENAI_API_KEY: key });
     expect(both.map((c) => c.kind)).toEqual(["claude", "codex", "openai"]);
+    expect(detectLlm({ DEEPSEEK_API_KEY: key })).toEqual([{ kind: "deepseek", label: "DeepSeek API key", status: "from DEEPSEEK_API_KEY", apiKey: key }]);
     expect(both.every((c) => !c.bin || isAbsolute(c.bin))).toBe(true);
     expect(JSON.stringify(both.map((c) => [c.label, c.status]))).not.toContain(key);
     expect(keyCandidate("openai", ` ${key}\n`)).toEqual({ kind: "openai", label: "OpenAI API key", status: "pasted", apiKey: key });
@@ -474,6 +475,7 @@ describe("extractWithLlm", () => {
       header: "x-api-key",
       value: KEY,
       model: "claude-haiku-5-5",
+      format: '"type":"json_schema"',
       ok: { stop_reason: "end_turn", content: [{ type: "thinking", thinking: "" }, { type: "text", text: JSON.stringify(model) }] },
       refusal: { stop_reason: "refusal", content: [] },
     },
@@ -483,8 +485,19 @@ describe("extractWithLlm", () => {
       header: "authorization",
       value: `Bearer ${KEY}`,
       model: "gpt-6-luna",
+      format: '"type":"json_schema"',
       ok: { status: "completed", output: [{ type: "reasoning" }, { type: "message", content: [{ type: "output_text", text: JSON.stringify(model) }] }] },
       refusal: { status: "completed", output: [{ type: "message", content: [{ type: "refusal", refusal: `no, ${KEY}` }] }] },
+    },
+    {
+      kind: "deepseek" as const,
+      url: "https://api.deepseek.com/chat/completions",
+      header: "authorization",
+      value: `Bearer ${KEY}`,
+      model: "deepseek-flash",
+      format: '"response_format":{"type":"json_object"}',
+      ok: { choices: [{ finish_reason: "stop", message: { role: "assistant", reasoning_content: "", content: JSON.stringify(model) } }] },
+      refusal: { choices: [{ finish_reason: "content_filter", message: { role: "assistant", content: "" } }] },
     },
   ];
 
@@ -505,7 +518,8 @@ describe("extractWithLlm", () => {
     expect(body).not.toContain(KEY);
     expect(body).toContain("Balayage $91+");
     expect(JSON.parse(body).model).toBe(api.model);
-    expect(body).toContain('"type":"json_schema"');
+    expect(body).toContain(api.format);
+    expect(body).toContain("price_kind"); // the schema reaches every provider, in the format field or the prompt
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.redirect).toBe("error");
 
@@ -516,6 +530,7 @@ describe("extractWithLlm", () => {
     expect(String((failure as Error).stack)).not.toContain(KEY);
 
     await expect(extractWithLlm(keyCandidate(api.kind, KEY), crawl, scriptedFetch(500, "upstream exploded").deps)).rejects.toThrow(new Error("The API returned an error (HTTP 500)."));
+    await expect(extractWithLlm(keyCandidate(api.kind, KEY), crawl, scriptedFetch(402, {}).deps)).rejects.toThrow(new Error("The API account is rate limited or out of credit (HTTP 402)."));
     await expect(extractWithLlm(keyCandidate(api.kind, KEY), crawl, scriptedFetch(200, api.refusal).deps)).rejects.toThrow(new Error(LLM_ERRORS.refused));
     const offline = { fetch: (async () => Promise.reject(new TypeError(`fetch failed for ${KEY}`))) as typeof fetch };
     await expect(extractWithLlm(keyCandidate(api.kind, KEY), crawl, offline)).rejects.toThrow(new Error(LLM_ERRORS.unreachable));
@@ -523,5 +538,20 @@ describe("extractWithLlm", () => {
     const unsent = scriptedFetch(200, api.ok);
     await expect(extractWithLlm(keyCandidate(api.kind, "bad key\r\nx-injected: 1"), crawl, unsent.deps)).rejects.toThrow(new Error(LLM_ERRORS.key));
     expect(unsent.calls).toEqual([]);
+  });
+
+  // protects: DeepSeek's JSON mode is not schema-checked, so an empty, cut-off or interrupted reply is reported, not parsed.
+  // fails_when: an empty `content` or a finish_reason other than "stop" reaches the JSON parser or buildProfile.
+  // seam: deps.fetch.
+  it("rejects an empty or cut-off DeepSeek answer", async () => {
+    const reply = (finish_reason: string, content: string) => scriptedFetch(200, { choices: [{ finish_reason, message: { content } }] }).deps;
+    for (const deps of [
+      reply("stop", ""),
+      reply("length", '{"business":'),
+      reply("insufficient_system_resource", JSON.stringify(model)),
+      scriptedFetch(200, {}).deps,
+    ]) {
+      await expect(extractWithLlm(keyCandidate("deepseek", KEY), crawl, deps)).rejects.toThrow(new Error(LLM_ERRORS.badAnswer));
+    }
   });
 });
