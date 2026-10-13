@@ -126,6 +126,10 @@ describe("init wizard: website step", () => {
     }
     for (const k of ["SQUARE_ACCESS_TOKEN", "GOOGLE_SERVICE_ACCOUNT_JSON", "SLACK_BOT_TOKEN", "TWILIO_AUTH_TOKEN", "API_KEYS"]) expect(scrubbed, k).toContain(k);
     expect(r.out).toContain("the text of those public pages is sent to the provider you choose");
+    expect(r.out).toContain("  Services: 1 with a fixed price, 1 without");
+    expect(r.out).toContain("Offered as defaults below: name, time zone, currency, hours and fixed-price services.");
+    expect(r.out).toContain("Your site also lists a service the wizard could not read one fixed price for:");
+    expect(r.out).toContain("Buffer after: minutes kept free"); // explained once a service is asked about
     expect(r.out).toContain(`Your site points to the time zone ${SITE_ZONE}; this machine is set to ${LOCAL_ZONE}.`);
     expect(r.out).toContain("- Balayage (from $80)");
     expect(r.out).toContain("agents can only tell customers to contact you about these"); // goal is book only
@@ -299,6 +303,82 @@ describe("init wizard: website step", () => {
     expect(config.ask_services.map((s) => s.name)).toEqual(["Balayage"]);
     expect(config.hours.sat).toEqual([{ start: "10:00", end: "18:00" }]);
     expect(readFileSync(join(r.dir, ".env"), "utf8")).not.toMatch(/^GOOGLE_/m);
+  });
+
+  // protects: an online shop's catalogue is not offered as services; with no service to walk through
+  //   first, the ask-the-owner list is shown before the empty service prompt; the summary promises only
+  //   what the questions then do; "finish later" says why questions follow; a machine's time zone is
+  //   labelled as such after a site was read.
+  // fails_when: a product reaches the ask list or config.json, "Service 1 name" is asked before the list
+  //   it should follow, the buffer and price notes print above a prompt left empty, or the summary calls
+  //   a yes-or-no list a default.
+  // seam: InitDeps.website; buildProfile runs for real on the synthetic page.
+  it("leaves a shop's products out and shows the ask list before the empty service prompt", async () => {
+    const shop = (rows: string[], services: unknown[]): WebsiteDeps => ({
+      crawl: async () => ({ url: "https://example.com/", pages: [{ url: "https://example.com/", title: "Example Store", text: ["Example Store", ...rows].join("\n") }], jsonLd: [] }),
+      detect: () => [CLAUDE],
+      extract: async () => ({ business: { name: "Example Store", currency: "USD" }, booking_system: { how_customers_book: "online_store" }, services }),
+    });
+    const bags = [
+      { name: "Tote Bag", kind: "product", evidence: "Tote Bag US$159.00", price_text: "US$159.00" },
+      { name: "Kitten Heels", kind: "product", evidence: "Kitten Heels US$89.00", price_text: "US$89.00" },
+    ];
+    const rows = ["Tote Bag US$159.00", "Kitten Heels US$89.00", "Bag Repair from $20"];
+    const r = await wizard(
+      [],
+      ["example.com", "", "", "", NOT_YET, "", "", "", false, "", ""], // address, provider, goal, system, not ready, name, zone, currency, ask services (no), no service, hours
+      shop(rows, [...bags, { name: "Bag Repair", kind: "appointment", evidence: "Bag Repair from $20", price_text: "from $20" }]),
+    );
+    expect(r.code).toBe(0);
+    expect(r.prompter.remaining).toBe(0);
+    expect(r.out).toContain("  Services: 1 listed, none with a fixed price");
+    expect(r.out).toContain("  Products: 2 left out (Tote Bag, Kitten Heels)");
+    expect(r.out).toContain("Gateway books appointments, so products for sale were not added.");
+    expect(r.out).toContain("Offered as defaults below: name and currency. Enter keeps one, typing replaces it.");
+    expect(r.out).toContain("Nothing is connected for now.");
+    expect(r.out).toContain("Your site lists a service the wizard could not read one fixed price for:\n  - Bag Repair (from $20)");
+    expect(r.out).not.toMatch(/Tote Bag \(|Buffer after:/);
+    expect(r.prompter.prompts).toContain(`Time zone [${LOCAL_ZONE}, this machine's]`);
+    expect(r.prompter.prompts.indexOf("List them as ask-the-owner services?")).toBeLessThan(r.prompter.prompts.indexOf("  Service 1 name"));
+    expect([r.config().services, r.config().ask_services]).toEqual([[], []]);
+
+    // Nothing but products: no services step at all, and the summary says what the site looks like.
+    const only = await wizard([], ["example.com", "", "", "", NOT_YET, "", "", ""], shop(rows.slice(0, 2), bags));
+    expect(only.code).toBe(0);
+    expect(only.prompter.remaining).toBe(0);
+    expect(only.out).toContain("This looks like an online shop. Gateway books appointments, so its products were not added.");
+    expect(only.prompter.prompts.some((q) => q.startsWith("  Service") || q.startsWith("List them") || q.startsWith("Hours"))).toBe(false);
+  });
+
+  // protects: a price the page wrote in a currency ("US$40") is offered as a bookable service only when
+  //   the merchant keeps that currency; with another it goes to the ask list. The summary does not offer
+  //   a site value a flag already answers, and a shop with nothing else usable is still called one.
+  // fails_when: USD 40 is offered as 40.00 in CAD, a flagged field is listed as a default, or the
+  //   nothing-found message drops the shop classification.
+  // seam: InitDeps.website; buildProfile runs for real on the synthetic page.
+  it("moves a price in another currency to the ask list and lists only the defaults a flag leaves", async () => {
+    const usd: WebsiteDeps = {
+      crawl: async () => ({ url: "https://example.com/", pages: [{ url: "https://example.com/", title: "Example Salon", text: "Example Salon\nGel Nails US$40" }], jsonLd: [] }),
+      detect: () => [CLAUDE],
+      extract: async () => ({ business: { name: "Example Salon", currency: "USD" }, services: [{ name: "Gel Nails", evidence: "Gel Nails US$40", price_text: "US$40", duration_min: null }] }),
+    };
+    const r = await wizard(["--currency", "CAD"], ["example.com", "", "", "", NOT_YET, "", "", "", true, "", ""], usd); // address, provider, goal, system, not ready, name, zone, currency (flag CAD kept), ask services, no service, hours
+    expect(r.code).toBe(0);
+    expect(r.prompter.remaining).toBe(0);
+    expect(r.out).toContain("Offered as a default below: name.");
+    expect(r.out).toContain("  Services: 1 listed, none with a fixed price");
+    expect(r.out).toContain("  - Gel Nails\n");
+    expect(r.prompter.prompts.some((q) => q.includes("Service 1 name") && q.includes("Gel Nails"))).toBe(false);
+    expect(r.config().services).toEqual([]);
+    expect(r.config().ask_services.map((s) => s.name)).toEqual(["Gel Nails"]);
+
+    const empty: WebsiteDeps = {
+      crawl: async () => ({ url: "https://example.com/", pages: [{ url: "https://example.com/", title: "x", text: "Nothing here" }], jsonLd: [] }),
+      detect: () => [CLAUDE],
+      extract: async () => ({ booking_system: { how_customers_book: "online_store" } }),
+    };
+    const shop = await wizard([], ["example.com", "", "", "", NOT_YET, "", "", ""], empty);
+    expect(shop.out).toContain("Nothing usable was found on your site (it looks like an online shop).");
   });
 
   // protects: nothing read from the site is written unless its question was asked: with Square the

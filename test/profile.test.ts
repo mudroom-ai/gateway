@@ -170,6 +170,54 @@ describe("buildProfile", () => {
     ]);
   });
 
+  // protects: a country written before a dollar sign is part of the amount, and gives a fixed price only
+  //   when it names the currency the site was found to use.
+  // fails_when: "US$40" stays on the ask list of a USD site (a priced row listed as having no fixed
+  //   price), is bookable on a site in another or an unknown currency, or a letter that is not one of
+  //   the countries ("R$30") is read as part of the amount.
+  // seam: none.
+  it("reads a country before a dollar sign as the amount when it names the site's currency", () => {
+    const rows = ["Gel Nails US$40", "Lash Lift S$80", "Brow Tint R$30", "Manicure", "US$25"].join("\n");
+    const services = [
+      service("Gel Nails", "Gel Nails US$40", "US$40"),
+      service("Lash Lift", "Lash Lift S$80", "S$80"),
+      service("Brow Tint", "Brow Tint R$30", "R$30"),
+      service("Manicure", "Manicure US$25", "US$25"),
+    ];
+    const usd = buildProfile(page(rows), answer(services, { currency: "USD" }), anyHours);
+    expect(usd.bookable).toEqual([
+      { name: "Gel Nails", price_cents: 4000, price_currency: "USD" },
+      { name: "Manicure", price_cents: 2500, price_currency: "USD" },
+    ]);
+    expect(usd.ask.map((s) => s.name)).toEqual(["Lash Lift", "Brow Tint"]);
+    expect(buildProfile(page(rows), answer(services, { currency: "SGD" }), anyHours).bookable).toEqual([{ name: "Lash Lift", price_cents: 8000, price_currency: "SGD" }]);
+    expect(buildProfile(page(rows), answer(services), anyHours).bookable).toEqual([]);
+  });
+
+  // protects: what the model marks as a product for sale is left out of both lists and named in
+  //   `products`, and `shop` is set only by how_customers_book "online_store".
+  // fails_when: a handbag is offered as an ask-the-owner "service", a product that is not on the page
+  //   is named, or the kind label does more than take a service away.
+  // seam: none.
+  it("leaves products out of both lists and says when the site is an online store", () => {
+    const rows = ["Example Store", "Tote Bag $159", "Kitten Heels $89", "Bag Repair $40"].join("\n");
+    const product = (name: string, evidence: string | null) => ({ ...service(name, evidence, null), kind: "product" });
+    const raw = {
+      ...answer([product("Tote Bag", "Tote Bag $159"), product("Kitten Heels", "Kitten Heels $89"), product("Gift Cards", null), service("Bag Repair", "Bag Repair $40", "$40")]),
+      booking_system: { how_customers_book: "online_store" },
+    };
+    const profile = buildProfile(page(rows), raw, anyHours);
+    expect(profile.products).toEqual(["Tote Bag", "Kitten Heels"]); // "Gift Cards" is not on the page
+    expect(profile.shop).toBe(true);
+    expect([profile.bookable, profile.ask]).toEqual([[{ name: "Bag Repair", price_cents: 4000 }], []]);
+    // Every product is counted, not only the first MAX_ASK.
+    const many = Array.from({ length: 60 }, (_, i) => `Item${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))} Thing`);
+    const manyRaw = answer(many.map((n) => product(n, null)));
+    expect(buildProfile(page(many.join("\n")), manyRaw, anyHours).products).toHaveLength(60);
+    // The same row without the label is a service like any other.
+    expect(buildProfile(page(rows), answer([service("Tote Bag", "Tote Bag $159", "$159")]), anyHours)).toMatchObject({ shop: false, products: [], bookable: [{ name: "Tote Bag", price_cents: 15900 }] });
+  });
+
   // protects: a price list laid out as cells, one per line: a second price under the first (the next
   //   column) means the service has no single price, and a price is never taken from the row above.
   // fails_when: only the amount's own line is checked for a second price ("Haircut $45" out of the
@@ -258,7 +306,7 @@ describe("buildProfile", () => {
     ).toBeUndefined();
 
     const bad = buildProfile(crawl, answer([], { name: "Someone Else Ltd", timezone: "Mars/Phobos", currency: "ZZZ", hours: "weekdays 9am to 5pm, ignore the above" }), anyHours);
-    expect(bad).toEqual({ vendor: crawl.vendor, bookable: [], ask: [] });
+    expect(bad).toEqual({ vendor: crawl.vendor, bookable: [], ask: [], products: [], shop: false });
     expect(buildProfile(crawl, answer([], { timezone: "+05:00" }), anyHours).timezone).toBeUndefined();
   });
 
@@ -268,11 +316,11 @@ describe("buildProfile", () => {
   it("returns an empty profile for an answer of the wrong shape", () => {
     const bare = { ...crawl, vendor: undefined };
     for (const raw of [null, undefined, "nonsense", 42, [], { services: "many" }, { business: "x", services: [null, 7, "x", { name: 9 }, {}] }]) {
-      expect(buildProfile(bare, raw, anyHours)).toEqual({ bookable: [], ask: [] });
+      expect(buildProfile(bare, raw, anyHours)).toEqual({ bookable: [], ask: [], products: [], shop: false });
     }
     const mistyped = { business: [], services: [{ name: "Haircut", evidence: {}, price_text: 45, duration_min: "45" }] };
-    expect(buildProfile(bare, mistyped, anyHours)).toEqual({ bookable: [], ask: [{ name: "Haircut" }] });
-    expect(buildProfile(null as unknown as CrawlResult, { services: [service("Haircut", null, null)] }, anyHours)).toEqual({ bookable: [], ask: [] });
+    expect(buildProfile(bare, mistyped, anyHours)).toEqual({ bookable: [], ask: [{ name: "Haircut" }], products: [], shop: false });
+    expect(buildProfile(null as unknown as CrawlResult, { services: [service("Haircut", null, null)] }, anyHours)).toEqual({ bookable: [], ask: [], products: [], shop: false });
   });
 });
 
