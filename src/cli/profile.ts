@@ -521,9 +521,9 @@ async function viaDeepseek(apiKey: string, prompt: string, doFetch: typeof fetch
   );
   const choice = record(list(res.choices)[0]);
   if (choice.finish_reason === "content_filter") throw new LlmError(LLM_ERRORS.refused);
-  // JSON mode can come back empty, and a reply cut at max_tokens is not valid JSON.
+  // JSON mode can come back empty, and a cut-off or interrupted reply is not valid JSON.
   const answer = str(record(choice.message).content);
-  if (choice.finish_reason === "length" || !answer.trim()) throw new LlmError(LLM_ERRORS.badAnswer);
+  if (choice.finish_reason !== "stop" || !answer.trim()) throw new LlmError(LLM_ERRORS.badAnswer);
   return parseJson(answer);
 }
 

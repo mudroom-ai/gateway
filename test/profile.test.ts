@@ -540,12 +540,17 @@ describe("extractWithLlm", () => {
     expect(unsent.calls).toEqual([]);
   });
 
-  // protects: DeepSeek's JSON mode is not schema-checked, so an empty or cut-off reply is reported, not parsed.
-  // fails_when: an empty `content` or a finish_reason of "length" reaches the JSON parser or buildProfile.
+  // protects: DeepSeek's JSON mode is not schema-checked, so an empty, cut-off or interrupted reply is reported, not parsed.
+  // fails_when: an empty `content` or a finish_reason other than "stop" reaches the JSON parser or buildProfile.
   // seam: deps.fetch.
   it("rejects an empty or cut-off DeepSeek answer", async () => {
     const reply = (finish_reason: string, content: string) => scriptedFetch(200, { choices: [{ finish_reason, message: { content } }] }).deps;
-    for (const deps of [reply("stop", ""), reply("length", '{"business":'), scriptedFetch(200, {}).deps]) {
+    for (const deps of [
+      reply("stop", ""),
+      reply("length", '{"business":'),
+      reply("insufficient_system_resource", JSON.stringify(model)),
+      scriptedFetch(200, {}).deps,
+    ]) {
       await expect(extractWithLlm(keyCandidate("deepseek", KEY), crawl, deps)).rejects.toThrow(new Error(LLM_ERRORS.badAnswer));
     }
   });
