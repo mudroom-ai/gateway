@@ -10,7 +10,7 @@ Needs Node >= 22.13, git and npm (macOS or Linux; Windows via WSL), plus the sys
 curl -fsSL https://raw.githubusercontent.com/mudroom-ai/gateway/main/install.sh | sh
 ```
 
-The installer clones into `~/gateway`, builds, and runs the setup wizard, which starts by asking what you want agents to do. It writes `config.json` and `.env`, checks access, and prints the next steps: start the server with `npm start` and check it locally. Re-run it to update; `npm run init` re-opens the wizard, which asks whether to keep, review or start over. Details, manual install and the read-it-first variant: [docs/install.md](docs/install.md).
+The installer clones into `~/gateway`, builds, and runs the setup wizard, which starts by offering to read your website to prefill its questions (optional, and it asks before sending the page text to a model), then asks what you want agents to do. It writes `config.json` and `.env`, checks access, and prints the next steps: start the server with `npm start` and check it locally. Re-run it to update; `npm run init` re-opens the wizard, which asks whether to keep, review or start over. Details, manual install and the read-it-first variant: [docs/install.md](docs/install.md).
 
 The API (services, slots, quotes, booking, cancel, reschedule, owner messages) is described in [docs/agents.md](docs/agents.md) and served at `/openapi.json`.
 

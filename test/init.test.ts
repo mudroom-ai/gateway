@@ -185,6 +185,7 @@ describe("init wizard: Slack owner channel", () => {
     const keyFile = join(dir, "key.json");
     writeFileSync(keyFile, JSON.stringify(KEY));
     const prompter = new ScriptedPrompter([
+      "", // website: skipped
       "Book appointments and message me", "1", "Yes, I have these", // goal, booking system (Google), ready
       "Ace", "Europe/London", "", "Haircut", "30", "0", "35", "", "", // name..hours
       keyFile, "cal@x", // Google
@@ -308,6 +309,7 @@ describe("init wizard: GlossGenius", () => {
     const dir = mkdtempSync(join(tmpdir(), "gw-init-ggi-"));
     const keyFile = ggKey(dir);
     const prompter = new ScriptedPrompter([
+      "", // website: skipped
       "", // goal: Book appointments (the default); GlossGenius asks the owner channel anyway
       "3", "Yes, I have these", // booking system: GlossGenius, ready
       "Luna Studio", "America/New_York", "", // name, zone, currency
@@ -392,6 +394,7 @@ describe("init wizard (interactive)", () => {
   it("Square interactive: picker answers by label, inactive locations hidden, location picked and written", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gw-init-sqi-"));
     const prompter = new ScriptedPrompter([
+      "", // website: skipped
       "", // goal: Book appointments (the default), so no owner channel question
       "Square Appointments", "Yes, I have these", // booking system, by label; ready
       "Foyer", "America/Los_Angeles", "", // name, zone, currency
@@ -438,7 +441,7 @@ describe("init wizard (interactive)", () => {
   it("Square interactive: no active locations exits 1 with the error and writes nothing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gw-init-sqna-"));
     const prompter = new ScriptedPrompter([
-      "", // goal
+      "", "", // website (skipped), goal
       "Square Appointments", "Yes, I have these", // booking system, by label; ready
       "Foyer", "America/Los_Angeles", "", // name, zone, currency
       "sandbox", "app-1", "sec-1", // env, app id, secret
@@ -516,9 +519,9 @@ describe("init wizard (interactive)", () => {
     writeFileSync(keyFile, JSON.stringify(KEY));
     // name, zone, currency, 1 service x4, add another, hours, key path, calendar id, write test
     const rest = ["Foyer", "Europe/London", "", "Haircut", "30", "0", "35", "", "", keyFile, "cal@example.com", false];
-    // goal, system, then "ready" only where Google (the default pick) is not configured yet
-    const answers = ["", "", "Yes, I have these", ...rest];
-    const json = await interactive(dir, ["", "", ...rest], {
+    // website (skipped), goal, system, then "ready" only where Google (the default pick) is not configured yet
+    const answers = ["", "", "", "Yes, I have these", ...rest];
+    const json = await interactive(dir, ["", "", "", ...rest], {
       GOOGLE_SERVICE_ACCOUNT_JSON: JSON.stringify(KEY),
       GOOGLE_CALENDAR_ID: "cal@example.com",
     });
@@ -540,7 +543,7 @@ describe("init wizard (interactive)", () => {
 
   it("no backend: ends with cd <dir>, the Google steps and npm run init, not npm start", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gw-init-i-"));
-    const { code, out, prompter } = await interactive(dir, ["", "", "Not yet, finish later", "Ace", "Europe/London", ""]);
+    const { code, out, prompter } = await interactive(dir, ["", "", "", "Not yet, finish later", "Ace", "Europe/London", ""]); // the first "" skips the website question
     expect(code).toBe(0);
     expect(prompter.remaining).toBe(0);
     expect(existsSync(join(dir, "config.json")) && existsSync(join(dir, ".env"))).toBe(true);
@@ -621,7 +624,7 @@ describe("init wizard (interactive)", () => {
   });
 
   it("first run prints the introduction before the goal question; a resume prints the short header", async () => {
-    const first = await interactive(mkdtempSync(join(tmpdir(), "gw-init-intro-")), ["", "", "Not yet, finish later", "Ace", "", ""]);
+    const first = await interactive(mkdtempSync(join(tmpdir(), "gw-init-intro-")), ["", "", "", "Not yet, finish later", "Ace", "", ""]); // website (skipped), goal, system, ...
     for (const line of INTRO.filter(Boolean)) expect(first.out).toContain(line);
     expect(first.prompter.choices[0]).toEqual(GOAL_ITEMS);
     const { dir } = savedSetup();
@@ -632,7 +635,7 @@ describe("init wizard (interactive)", () => {
 
   it("a system that is not set up shows its guide; the browser opens only when asked, and Not yet ends on that guide", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gw-init-guide-"));
-    const prompter = new ScriptedPrompter(["", "Square Appointments", READY_ITEMS.open.label, READY_ITEMS.later.label, "Foyer", "", ""]);
+    const prompter = new ScriptedPrompter(["", "", "Square Appointments", READY_ITEMS.open.label, READY_ITEMS.later.label, "Foyer", "", ""]); // website (skipped), goal, ...
     const logs: string[] = [];
     const opened: string[] = [];
     const code = await runInit(["--dir", dir], { env: { DISPLAY: ":0" }, prompter, openUrl: (u) => opened.push(u), log: (m) => logs.push(m) });
@@ -650,7 +653,7 @@ describe("init wizard (interactive)", () => {
     expect(tail).not.toContain(GOOGLE_SETUP_STEPS[0]);
 
     // Over SSH there is no browser to open, so the option is not offered and nothing opens.
-    const ssh = new ScriptedPrompter(["", "", READY_ITEMS.later.label, "Foyer", "", ""]);
+    const ssh = new ScriptedPrompter(["", "", "", READY_ITEMS.later.label, "Foyer", "", ""]);
     await runInit(["--dir", mkdtempSync(join(tmpdir(), "gw-init-guide2-"))], { env: { SSH_TTY: "/dev/pts/0", DISPLAY: ":0" }, prompter: ssh, openUrl: (u) => opened.push(u), log: () => {} });
     expect(ssh.choices[2]!.map((i) => i.label)).toEqual([READY_ITEMS.yes.label, READY_ITEMS.later.label]);
     expect(opened).toHaveLength(1);
@@ -666,7 +669,7 @@ describe("init wizard (interactive)", () => {
     expect(keep.out).toContain("nothing was changed");
     expect(keep.out).toContain("curl localhost:4000/api/services");
 
-    const fresh = await interactive(dir, ["Start over", "", "", READY_ITEMS.later.label, "New Name", "", ""]);
+    const fresh = await interactive(dir, ["Start over", "", "", "", READY_ITEMS.later.label, "New Name", "", ""]); // Start over asks the website question again (skipped here)
     expect(fresh.code).toBe(0);
     expect(fresh.prompter.prompts).toContain("Business or your name"); // no saved default
     expect(fresh.out).toContain(INTRO[1]);

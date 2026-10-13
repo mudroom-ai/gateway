@@ -1,6 +1,6 @@
 // Prompter for tests of the interactive wizard: answers are taken in order,
-// strings for `ask` and booleans for `confirm`. An empty string accepts the
-// prompt's default, as Enter does on a terminal.
+// strings for `ask`, `choose` and `secret`, booleans for `confirm`. An empty
+// string accepts the prompt's default, as Enter does on a terminal.
 
 import type { Prompter } from "../../src/cli/init.js";
 import type { PickItem } from "../../src/cli/picker.js";
@@ -44,6 +44,11 @@ export class ScriptedPrompter implements Prompter {
     const i = items.findIndex((it) => it.label === a);
     if (i < 0) throw new Error(`scripted prompter: "${q}" has no item ${JSON.stringify(a)}`);
     return i;
+  }
+
+  /** A masked prompt: recorded as "<q> [secret]", never with the answer, so tests can check a key is not echoed anywhere. */
+  async secret(q: string): Promise<string> {
+    return (this.next(`${q} [secret]`, "string") as string).trim();
   }
 
   close(): void {}
