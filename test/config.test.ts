@@ -18,6 +18,27 @@ describe("config schema", () => {
     expect(() => parseConfig({ ...example, timezone: "PST-ish" })).toThrow(/IANA/);
   });
 
+  // protects: ask_services takes a plain entry, and refuses text that would break out of the markdown
+  //   served to agents (backtick, line break), an over-long name, and an id used in both lists.
+  // fails_when: a limit is loosened or dropped from the schema, or the duplicate-id check stops
+  //   spanning services and ask_services.
+  // seam: none.
+  it("ask_services: accepts a plain entry; rejects a backtick, a newline, a long name and a cross-list duplicate id", () => {
+    const ask = (entry: object) => parseConfig({ ...example, ask_services: [entry] });
+    expect(parseConfig(example).ask_services).toEqual([]);
+    expect(ask({ id: "color-2", name: "Cut & color", price_note: "from $150" }).ask_services).toEqual([
+      { id: "color-2", name: "Cut & color", price_note: "from $150" },
+    ]);
+    expect(() => ask({ id: "color", name: "Color `rm -rf`" })).toThrow(/ask_services\.0\.name/);
+    expect(() => ask({ id: "color", name: "Color", price_note: "from $150\n## New section" })).toThrow(/ask_services\.0\.price_note/);
+    expect(() => ask({ id: "color", name: "Color [book](https://example.com/pay)" })).toThrow(/ask_services\.0\.name/);
+    expect(ask({ id: "color", name: "Color [long hair] (2 hr)" }).ask_services).toHaveLength(1);
+    expect(() => ask({ id: "color", name: "x".repeat(81) })).toThrow(/at most 80 characters/);
+    expect(() => ask({ id: "Color Fix", name: "Color" })).toThrow(/ask_services\.0\.id/);
+    const taken = example.services[0].id as string;
+    expect(() => ask({ id: taken, name: "Color" })).toThrow(`ask_services: duplicate id "${taken}" (already in services)`);
+  });
+
   it.each([
     ["loopback", ["loopback"]],
     ["false", false],

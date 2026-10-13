@@ -57,6 +57,7 @@ import { ConnectorError, supportsThreads, type CommunicationConnector, type Owne
 import { err, ok, type GatewayError, type Result } from "./errors.js";
 import { contactKeys, messageRateLimit } from "./middleware/ratelimit.js";
 import { bookedThreadNotice } from "./notify/owner.js";
+import { askServices } from "./services.js";
 import { formatInZone } from "./slots.js";
 import type { OutboxKind, OutboxRow, Store, ThreadMode, ThreadRow, ThreadState } from "./store/sqlite.js";
 import type { Booking, Customer, Service } from "./types.js";
@@ -355,18 +356,20 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     return null;
   }
 
-  async function lookupService(id: string): Promise<Service | "unknown" | undefined> {
-    if (!deps.listServices) return undefined;
+  /** A bookable service, else an ask-the-owner one (also a valid service_id here); only the name is used. */
+  async function lookupService(id: string): Promise<{ name: string } | "unknown" | undefined> {
+    const ask = (bookable: Service[]) => askServices(config, bookable).find((a) => a.id === id);
+    if (!deps.listServices) return ask([]);
     let services: Service[];
     try {
       services = await deps.listServices();
     } catch {
-      return undefined;
+      return ask([]);
     }
-    return services.find((s) => s.id === id) ?? "unknown";
+    return services.find((s) => s.id === id) ?? ask(services) ?? "unknown";
   }
 
-  function openerText(t: ThreadRow, text: string, service: Service | undefined): string {
+  function openerText(t: ThreadRow, text: string, service: { name: string } | undefined): string {
     const lines = [
       `New message for ${config.name} from a customer's AI assistant (thread ${t.thread_id})`,
       `From: ${t.customer.name} (${contactLine(t.customer)})`,
@@ -473,7 +476,7 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     if (bad) return err("invalid_customer", `${bad}, so the owner can reach them`);
     const text = cleanMessage(req?.message);
     if (isErr(text)) return fail(text);
-    let service: Service | undefined;
+    let service: { name: string } | undefined;
     let serviceId: string | null = null;
     if (req?.service_id !== undefined && req.service_id !== null && req.service_id !== "") {
       if (typeof req.service_id !== "string") return err("invalid_request", "service_id must be a string");

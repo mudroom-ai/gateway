@@ -11,6 +11,7 @@ Start from [`config.example.json`](../config.example.json). Fields:
 | `merchant_id`, `name` | Identifier and display name (the name shows up in `llms.txt` and the booking page) |
 | `timezone`, `currency` | IANA time zone and ISO currency for every time and price the gateway returns |
 | `services[]` | `id`, `name`, optional `description`, `duration_min`, optional `buffer_min` (default 0, added after the appointment), `price_cents` |
+| `ask_services[]` | Services the business offers but agents cannot book (no fixed price or duration): `id` (lowercase letters, digits and hyphens, up to 64), `name` (up to 80 characters), optional `price_note` (up to 60, the price in your own words, for example `from $80`). Plain single-line text: no backticks, angle brackets or markdown links (`](`). At most 50, default none; an `id` may not repeat one in `services[]`. Agents see them in `/llms.txt` and `GET /api/services` and can message you about one ([agents.md](agents.md#ask-the-owner-services)) |
 | `hours` | Weekly opening windows per day (`mon` … `sun`), each a list of `{start, end}` in local time; an empty list means closed |
 | `default_buffer_min` | Padding added after every busy interval already in the calendar before slots are searched; stacks with the service's `buffer_min` |
 | `blackout_days[]` | Dates (`YYYY-MM-DD`) with no slots |
@@ -22,6 +23,8 @@ Start from [`config.example.json`](../config.example.json). Fields:
 | `booking_enabled` | Default for the `book` kill switch (overridden by `BOOKING_ENABLED`) |
 
 In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (the platform's services, prices and open times are used); keep `name`, `timezone`, `currency` and `limits`. See [connectors/square.md](connectors/square.md) and [connectors/glossgenius.md](connectors/glossgenius.md).
+
+`ask_services` applies with every booking system. If an entry's `id` is also the id of a bookable service from the platform, the bookable one wins and the entry is not shown.
 
 ## Environment variables
 

@@ -35,6 +35,25 @@ export const ServiceSchema = z.object({
   price_cents: int().nonnegative(),
 });
 
+/**
+ * One line of merchant text that is rendered into the markdown served to AI agents: no control or
+ * format characters, no line breaks, no backticks, no angle brackets and no "](", the middle of a
+ * markdown link or image. Length is in code points.
+ */
+const UNSAFE_LINE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}`<>]|\]\(/u;
+const plainLine = (max: number) =>
+  z
+    .string()
+    .refine((s) => [...s].length <= max, { message: `at most ${max} characters` })
+    .refine((s) => !UNSAFE_LINE.test(s), { message: "one line of plain text: no control characters, backticks, angle brackets or markdown links" });
+
+/** Offered but not bookable online (no fixed price or duration): agents see it and message the owner about it. */
+export const AskServiceSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,64}$/, "lowercase letters, digits and hyphens, 1 to 64 characters"),
+  name: plainLine(80).refine((s) => s.trim().length > 0, { message: "must not be empty" }),
+  price_note: plainLine(60).optional(),
+});
+
 /** Every condition is optional; all present conditions must hold. Merchant-local. */
 export const DiscountSchema = z.object({
   id: z.string().min(1),
@@ -86,6 +105,8 @@ export const ConfigSchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/, "ISO 4217 code, e.g. USD"),
   /** Google mode needs at least one; in Square mode services come from the catalog and this may be empty. */
   services: z.array(ServiceSchema).default([]),
+  /** Listed for agents with every booking system, never bookable; an id that is also a bookable service is ignored. */
+  ask_services: z.array(AskServiceSchema).max(50).default([]),
   hours: HoursSchema,
   /** Padding applied to every busy interval from the calendar before slot search. */
   default_buffer_min: int().nonnegative().default(0),
@@ -105,6 +126,7 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
+export type AskServiceConfig = z.infer<typeof AskServiceSchema>;
 export type DiscountConfig = z.infer<typeof DiscountSchema>;
 export type Limits = z.infer<typeof LimitsSchema>;
 
@@ -238,6 +260,12 @@ export function parseConfig(raw: unknown): Config {
   for (const s of r.data.services) {
     if (ids.has(s.id)) throw new Error(`Invalid config:\n  - services: duplicate id "${s.id}"`);
     ids.add(s.id);
+  }
+  const askIds = new Set<string>();
+  for (const s of r.data.ask_services) {
+    if (askIds.has(s.id)) throw new Error(`Invalid config:\n  - ask_services: duplicate id "${s.id}"`);
+    if (ids.has(s.id)) throw new Error(`Invalid config:\n  - ask_services: duplicate id "${s.id}" (already in services)`);
+    askIds.add(s.id);
   }
   return r.data;
 }
