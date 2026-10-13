@@ -65,7 +65,7 @@ It cannot:
 - **Minimum lead time.** Slots start at least 48 hours out by default (`GLOSSGENIUS_MIN_LEAD_HOURS`). The booking page is read up to 5 minutes stale, and the merchant needs time to key the booking in; a shorter lead raises the chance that a GlossGenius client takes the same time first.
 - **Texts are one-way.** Replies to the SMS are not read in this version. To refuse an agent booking, the merchant cancels it with the customer directly.
 - **One location.** Only the first location on the booking page is used.
-- Without Twilio, the merchant only learns about agent bookings from the gateway's log and the Google Calendar.
+- Without Slack or Twilio, the merchant only learns about agent bookings from the gateway's log and the Google Calendar, and agents cannot leave a message: the message routes are not offered, because nobody would read them.
 
 ## Errors
 

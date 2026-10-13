@@ -6,9 +6,10 @@ import { DateTime } from "luxon";
 import type { CommunicationConnector } from "../connectors/types.js";
 import type { Booking, Service, Slot } from "../types.js";
 
-/** Writes the message to the log. Used when no SMS provider is configured. */
+/** Writes the message to the log. Used when no SMS provider is configured. Booking notices only: it never carries customer messages. */
 export function logOwnerChannel(log: (m: string) => void = (m) => console.warn(m)): CommunicationConnector {
   return {
+    logOnly: true,
     async notify(message) {
       log(`[gateway] owner notice (no SMS configured): ${message}`);
     },

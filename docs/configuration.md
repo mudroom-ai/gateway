@@ -55,7 +55,7 @@ In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (
 | `SLACK_APP_TOKEN` | unset | Slack: app-level token (`xapp-...`) with `connections:write`, for Socket Mode |
 | `SLACK_CHANNEL_ID` | unset | Slack: the channel (`C...`) the app is invited to. Set all three `SLACK_*` above or none; a partial set, or the two tokens swapped, stops startup |
 | `SLACK_OWNER_USER_IDS` | unset | Slack: optional comma list of user ids (`U...`) whose thread replies count as the owner's. Unset means anyone in the channel |
-| `MESSAGES_ENABLED` | `true` | Kill switch for `leave_message`, `get_thread` and `follow_up`. Only matters when an owner channel (Slack, Twilio, or the GlossGenius log) is configured; with none, those routes are not offered at all. `false` answers them with `messages_disabled` |
+| `MESSAGES_ENABLED` | `true` | Kill switch for `leave_message`, `get_thread` and `follow_up`. Only matters when an owner channel (Slack or Twilio) is configured; with none, or with only the GlossGenius log fallback, those routes are not offered at all. `false` answers them with `messages_disabled` |
 
 The Slack owner channel (the first three `SLACK_*` vars) works with every booking system and wins over Twilio when both are set, because only Slack carries the owner's replies back to agents ([connectors/slack.md](connectors/slack.md)).
 
