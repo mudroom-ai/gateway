@@ -89,7 +89,7 @@ export const INTRO = [
 ];
 /** The first question: what the merchant wants set up. The wizard then runs only the matching steps. */
 export const GOAL_ITEMS: PickItem[] = [
-  { emoji: "📅", label: "Book appointments" },
+  { emoji: "🕒", label: "Book appointments" },
   { emoji: "💬", label: "Book appointments and message me" },
 ];
 const GOAL_DESCRIPTION = [
@@ -597,7 +597,8 @@ function ttyPrompter(): Prompter {
     },
     async choose(q, items, def = 0, description, cancel) {
       const i = await pick(q, items, def, { description, cancel });
-      console.log(`${style.question(q)}: ${style.answer(`${items[i]!.emoji ? `${items[i]!.emoji} ` : ""}${items[i]!.label}`)}`);
+      // A question that ends in "?" is not given a colon as well.
+      console.log(`${style.question(q)}${q.endsWith("?") ? "" : ":"} ${style.answer(`${items[i]!.emoji ? `${items[i]!.emoji} ` : ""}${items[i]!.label}`)}`);
       return i;
     },
     secret: (q) => readSecret(q),
@@ -911,41 +912,71 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       const guided = !systemKnown[system];
       let notReady = !!(f["no-backend"] || f["skip-google"]);
       const guideIO = { env, log, openUrl: deps.openUrl };
-      if (guided && !notReady) notReady = !(await showGuide(p, SETUP_GUIDES[planned](callbackPort), guideIO));
+      if (guided && !notReady) {
+        notReady = !(await showGuide(p, SETUP_GUIDES[planned](callbackPort), guideIO));
+        // "Finish later" does not end the wizard: say what the remaining questions are for.
+        if (notReady) log("Nothing is connected for now. The next answers are saved, so `npm run init` starts from them next time.");
+      }
       log("");
       const name = await askValid(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
       const siteZone = (f.timezone ?? saved?.timezone) === undefined ? site?.timezone : undefined;
       if (siteZone && siteZone !== localZone) log(`Your site points to the time zone ${cleanLine(siteZone, 64)}; this machine is set to ${localZone}.`);
-      const timezone = await askValid(p, "Time zone", f.timezone ?? saved?.timezone ?? siteZone ?? localZone, validZone);
+      // After a site was read, a default that is only this machine's zone is labelled as such: it follows the site's summary and could be taken for the site's.
+      const zoneKnown = f.timezone ?? saved?.timezone ?? siteZone;
+      const timezone = await askValid(p, "Time zone", zoneKnown ?? localZone, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
       const currency = await askValid(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
       // Square and GlossGenius set services, prices and hours themselves. Not ready, they are asked on the next
       // run, unless the website step found services or hours: those are asked about now, or the reading is lost.
       const store = useSquare || useGlossGenius;
       const siteCatalog = !!site && (site.bookable.length > 0 || site.ask.length > 0 || site.hours !== undefined);
       const platform = store || (notReady && !siteCatalog);
-      const askService = async (sname: string, prev?: ServiceAnswer): Promise<ServiceAnswer> => ({
-        name: sname,
-        duration_min: await askValid(ask, "    Duration (minutes)", String(prev?.duration_min ?? 60), (s) => parseIntIn(s, "duration", 1, 1440)),
-        buffer_min: await askValid(ask, "    Buffer after (minutes)", String(prev?.buffer_min ?? 0), (s) => parseIntIn(s, "buffer", 0, 1440)),
-        price_cents: await askValid(ask, `    Price (${currency})`, prev ? (prev.price_cents / 100).toFixed(2) : "0", parsePriceCents),
-      });
+      // Buffer and price are explained once, at the first service that is asked about: not above a prompt left empty.
+      let explained = false;
+      const askService = async (sname: string, prev?: ServiceAnswer): Promise<ServiceAnswer> => {
+        if (!explained) {
+          log(style.dim("    Buffer after: minutes kept free once a booking ends (clean-up, travel, a breather) before the next one can start; 0 for none."));
+          log(style.dim("    Price: 0 is a free service."));
+          explained = true;
+        }
+        return {
+          name: sname,
+          duration_min: await askValid(ask, "    Duration (minutes)", String(prev?.duration_min ?? 60), (s) => parseIntIn(s, "duration", 1, 1440)),
+          buffer_min: await askValid(ask, "    Buffer after (minutes)", String(prev?.buffer_min ?? 0), (s) => parseIntIn(s, "buffer", 0, 1440)),
+          price_cents: await askValid(ask, `    Price (${currency})`, prev ? (prev.price_cents / 100).toFixed(2) : "0", parsePriceCents),
+        };
+      };
       const services: ServiceAnswer[] = [];
       const savedServices = (saved?.services ?? []).map(({ name, duration_min, buffer_min, price_cents }) => ({ name, duration_min, buffer_min, price_cents }));
       // Fixed-price services from the site are offered like saved ones; there are none when anything is saved.
       const siteServices = (site?.bookable ?? []).map((b) => ({ name: b.name, duration_min: b.duration_min ?? 60, buffer_min: 0, price_cents: b.price_cents }));
+      const prefilled = [...savedServices, ...siteServices];
       let askServices: Answers["ask_services"];
+      // What the site lists with no single fixed price, so not bookable. One yes or no for all of them,
+      // so every one is shown (50 at most): nothing is written that was not on screen.
+      const offerAskServices = async (also: boolean) => {
+        if (platform || !site?.ask.length) return;
+        const shown = site.ask.map((s) => `  - ${cleanLine(s.name, 80)}${s.price_note ? ` (${cleanLine(s.price_note, 60)})` : ""}`);
+        log(`\nYour site ${also ? "also " : ""}lists ${site.ask.length === 1 ? "a service" : `${site.ask.length} services`} the wizard could not read one fixed price for:\n${shown.join("\n")}`);
+        log(style.dim("As ask-the-owner services, agents can read them and message you about them, but cannot book them."));
+        if (await ask.confirm("List them as ask-the-owner services?")) {
+          askServices = site.ask;
+          if (goal === GOAL_BOOK && !channelKnown) {
+            log('Note: with "Book appointments" alone, agents can only tell customers to contact you about these. Run `npm run init` again and pick "Book appointments and message me" to let them leave you a message.');
+          }
+        }
+      };
       if (platform) {
         services.push(...savedServices); // Not asked here; a resume leaves them as they were.
         if (store && site && (site.bookable.length || site.ask.length)) {
           log(`${useSquare ? "Square" : "GlossGenius"} supplies your services, so the ones found on your site were not added.`);
         }
       } else {
+        // With nothing to walk through first, what the site lists is shown before the empty "Service 1 name" prompt, not after it.
+        if (!prefilled.length) await offerAskServices(false);
         log(style.dim("\nServices (what people can book: a haircut, a paid consult, a free intro call). Leave the name empty when done."));
-        log(style.dim("Buffer after: minutes kept free once a booking ends (clean-up, travel, a breather) before the next one can start; 0 for none."));
-        log(style.dim("Price: 0 is a free service."));
         if (savedServices.length) log("Saved services come first: Enter keeps an answer, a new name renames the service, - removes it.");
         else if (siteServices.length) log("Services from your site come first: Enter keeps an answer, a new name renames the service, - removes it.");
-        for (const prev of [...savedServices, ...siteServices]) {
+        for (const prev of prefilled) {
           const sname = (await p.ask(`  Service ${services.length + 1} name`, prev.name)).trim();
           if (sname === "-") {
             log(`    Removed ${prev.name}.`);
@@ -963,19 +994,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         }
         services.push(await askService(sname));
       }
-      if (!platform && site?.ask.length) {
-        // The rest of what the site lists: no single fixed price, so not bookable. One yes or no for all of them,
-        // so every one is shown (50 at most): nothing is written that was not on screen.
-        const shown = site.ask.map((s) => `  - ${cleanLine(s.name, 80)}${s.price_note ? ` (${cleanLine(s.price_note, 60)})` : ""}`);
-        log(`\nYour site also lists ${site.ask.length === 1 ? "a service" : `${site.ask.length} services`} without one fixed price:\n${shown.join("\n")}`);
-        log(style.dim("As ask-the-owner services, agents can read them and message you about them, but cannot book them."));
-        if (await p.confirm("List them as ask-the-owner services?")) {
-          askServices = site.ask;
-          if (goal === GOAL_BOOK && !channelKnown) {
-            log('Note: with "Book appointments" alone, agents can only tell customers to contact you about these. Run `npm run init` again and pick "Book appointments and message me" to let them leave you a message.');
-          }
-        }
-      }
+      if (prefilled.length) await offerAskServices(true);
       const hoursKept = f.hours ?? (saved ? renderHours(saved.hours) : undefined);
       let hours = hoursKept ?? DEFAULT_HOURS;
       if (!platform) {

@@ -66,6 +66,10 @@ export interface SiteProfile {
   bookable: { name: string; duration_min?: number | undefined; price_cents: number }[];
   /** Every other service the page names. `price_note` is the page's own price phrase. */
   ask: { name: string; price_note?: string | undefined }[];
+  /** Names the model marked as products for sale: left out of both lists, since a purchase is not booked or asked about. */
+  products: string[];
+  /** True when the model says customers buy through an online store. */
+  shop: boolean;
 }
 
 /** How long one model call may take before it is abandoned. */
@@ -163,10 +167,12 @@ const nullable = { type: ["string", "null"] };
 
 // Written by hand and sent as is to all four providers: the two CLIs were
 // tested with exactly these keywords. buildProfile reads only name, timezone,
-// currency and hours from `business`, and name, evidence, price_text, price_kind
-// (only as a veto) and duration_min from each service; the other fields give the
-// model somewhere to put what it found, so it does not squeeze a "from" price
-// into a fixed one.
+// currency and hours from `business`, how_customers_book from `booking_system`
+// (only "online_store"), and name, kind (only "product"), evidence, price_text,
+// price_kind and duration_min from each service. kind and price_kind are vetoes:
+// they can take a service or a price away, never add one. The other fields give
+// the model somewhere to put what it found, so it does not squeeze a "from"
+// price into a fixed one.
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -583,18 +589,26 @@ const onPage = (corpus: Corpus, needle: string) => wordHits(corpus.flat, needle,
 // against the page, by an allowlist: on the page lines the quote sits on, once
 // the service's name and the one amount are taken out, nothing may remain but
 // separators and a duration. Any other word, number or symbol beside them
-// ("from", "(and up)", "+", "/hr", "US", a second price) sends the service to
+// ("from", "(and up)", "+", "/hr", "USD", a second price) sends the service to
 // the ask list. The page is read, not the quote, because a quote cut short
 // ("Colour $80" out of "Colour $80+") is still a substring of the page.
+//
+// One prefix is read as part of the amount: a country written before a dollar
+// sign ("US$40", "S$20"). It is a fixed price only when it names the currency
+// the site was found to use, so "US$40" on a Canadian site stays on the ask list.
 
 interface Amount {
-  /** Offsets in the line; `start` includes the currency symbol. */
+  /** Offsets in the line; `start` includes the currency symbol and a country before it. */
   start: number;
   end: number;
   cents: number | undefined;
+  /** The currency a country-prefixed dollar sign names ("us$" is USD); undefined for a bare symbol or number. */
+  currency?: string | undefined;
 }
 
-const NUMBER_RUN = /([$£€] ?)?(\d[\d.,]*\d|\d)/g;
+/** The countries read before a dollar sign, as folded text has them, and the currency each names. */
+const DOLLAR_OF: Readonly<Record<string, string>> = { us: "USD", ca: "CAD", c: "CAD", au: "AUD", a: "AUD", nz: "NZD", sg: "SGD", s: "SGD", hk: "HKD" };
+const NUMBER_RUN = /(?:(?<![\p{L}\p{Nd}])(us|ca|au|nz|sg|hk|a|c|s)\$ ?|[$£€] ?)?(\d[\d.,]*\d|\d)/gu;
 /** Digits with optional thousands commas and optional cents. "45,00", "1.200" and "1.5" are not prices in this grammar. */
 const MONEY = /^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?$/;
 /** After a bare number: an optional "-60" or "to 60", then a word. "45 min", "60-minute", "45-60 min", "3 sessions". Not "45 to 60" or "45 and up". */
@@ -618,12 +632,12 @@ function amountsIn(line: string): Amount[] {
   for (const m of line.matchAll(NUMBER_RUN)) {
     const start = m.index;
     const end = start + m[0].length;
-    if (!m[1]) {
+    if (m[0] === m[2]) {
       const before = line[start - 1] ?? "";
       const after = line.slice(end);
       if (/[\p{L}#:]/u.test(before) || /^(?::\d|%)/.test(after) || THEN_A_WORD.test(after)) continue;
     }
-    found.push({ start, end, cents: toCents(m[2] ?? "") });
+    found.push({ start, end, cents: toCents(m[2] ?? ""), ...(m[1] ? { currency: DOLLAR_OF[m[1]] } : {}) });
   }
   return found;
 }
@@ -643,7 +657,7 @@ const CONNECTOR = /(?<!\p{L})(?:to|or|and|from|thru|through|up to)(?!\p{L})/gu;
 /** A word that makes the amount after it something other than a fixed price, wherever on the line it stands. */
 const QUALIFIER_WORD =
   /(?<![\p{L}\p{Nd}])(?:from|starting|starts?|begins?|beginning|base|min|minimum|up ?to|upwards? of|as low as|as little as|at least|approx|approximately|about|around|roughly|between|save|off|deposit|average|avg|desde|ab|[aà] partir de)(?![\p{L}\p{Nd}])/u;
-/** What cannot stand directly before an amount: a letter or digit joined to it ("US$80", "1,200"), another symbol, or the first half of a range. */
+/** What cannot stand directly before an amount: a letter or digit joined to it ("R$80", "1,200"), another symbol, or the first half of a range. */
 const JOINED_BEFORE = /(?:[\p{L}\p{Nd}]|\d[.,]|[+~<>/@*&^$£€] ?|\d ?(?:-|to|or) ?)$/u;
 
 const SAME_LINE = 80;
@@ -699,13 +713,18 @@ function fixedRow(lined: string, at: number, length: number, name: Span, amount:
   return !lined.slice(at + amount[1], at + name[0]).includes("\n") && !continuesAbove(lined, bol);
 }
 
-/** The fixed price, in cents, that the page states for the service on the line the model quoted; undefined when there is no such line or the price is anything but fixed. */
-function fixedPrice(corpus: Corpus, nameKey: string, evidence: string): number | undefined {
+/**
+ * The fixed price, in cents, that the page states for the service on the line the model quoted; undefined when there
+ * is no such line or the price is anything but fixed. `currency` is the one the site was found to use: an amount
+ * with a country before its dollar sign counts only when it names that currency.
+ */
+function fixedPrice(corpus: Corpus, nameKey: string, evidence: string, currency: string | undefined): number | undefined {
   const quote = foldLine(cleanLine(evidence, EVIDENCE_MAX * 2));
   if (!quote || Array.from(quote).length > EVIDENCE_MAX || quote.includes("%")) return undefined;
   const amounts = amountsIn(quote);
   const amount = amounts[0];
   if (amounts.length !== 1 || !amount || amount.cents === undefined) return undefined;
+  if (amount.currency && amount.currency !== currency) return undefined;
   // The name as whole words, clear of the amount: "cut" is not named by "haircut deluxe $20".
   const nameAt = wordHits(quote, nameKey, MAX_EVIDENCE_HITS).find((at) => at + nameKey.length <= amount.start || at >= amount.end);
   if (nameAt === undefined) return undefined;
@@ -808,15 +827,19 @@ let currencies: Set<string> | undefined;
  *   grant it. Every other named service goes to `ask`.
  * - Time zone, currency and hours are kept only when they are valid values of
  *   their closed vocabularies; `validHours` is the wizard's own parser.
+ * - A service the model calls a product is left out of both lists and named in
+ *   `products`; `shop` is the model saying the site is an online store. Like
+ *   price_kind, both can only take something away.
  * - `vendor` comes from the crawl, never from the model.
  */
 export function buildProfile(crawl: CrawlResult, raw: unknown, validHours: (spec: string) => boolean): SiteProfile {
-  const profile: SiteProfile = { bookable: [], ask: [] };
+  const profile: SiteProfile = { bookable: [], ask: [], products: [], shop: false };
   try {
     if (crawl.vendor) profile.vendor = crawl.vendor;
     const corpus = buildCorpus(crawl);
     const root = record(raw);
     const business = record(root.business);
+    profile.shop = str(record(root.booking_system).how_customers_book) === "online_store";
 
     const name = pageName(corpus, business.name)?.name;
     if (name) profile.name = name;
@@ -844,8 +867,13 @@ export function buildProfile(crawl: CrawlResult, raw: unknown, validHours: (spec
       const id = foldLine(named.name);
       if (seen.has(id)) continue;
       seen.add(id);
+      // Something to buy, not to book or to ask the owner about.
+      if (str(item.kind) === "product") {
+        if (profile.products.length < MAX_ASK) profile.products.push(named.name);
+        continue;
+      }
       // The model's own label is never a reason to offer a price, only a reason not to.
-      const cents = NOT_FIXED.has(str(item.price_kind)) ? undefined : fixedPrice(corpus, named.key, str(item.evidence));
+      const cents = NOT_FIXED.has(str(item.price_kind)) ? undefined : fixedPrice(corpus, named.key, str(item.evidence), profile.currency);
       if (cents !== undefined && profile.bookable.length < MAX_BOOKABLE) {
         const minutes = item.duration_min;
         const timed = typeof minutes === "number" && Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
