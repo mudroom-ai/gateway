@@ -353,7 +353,7 @@ describe("extractWithLlm", () => {
     expect(call.o.stdin).toContain("https://example.com/services");
     expect(call.args.join("\n")).not.toContain("Balayage");
     expect(call.args.join("\n")).not.toContain("example.com");
-    expect(call.args.slice(0, 12)).toEqual(["-p", "--model", "sonnet", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands", "--no-session-persistence", "--output-format", "json"]);
+    expect(call.args.slice(0, 12)).toEqual(["-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands", "--no-session-persistence", "--output-format", "json"]);
     expect(call.args[call.args.indexOf("--system-prompt") + 1]).toMatch(/untrusted website/);
     expect(JSON.parse(call.args[call.args.indexOf("--json-schema") + 1]!).properties.services.items.required).toContain("evidence");
     expect(call.o.stdin).toContain("More services");
@@ -379,7 +379,7 @@ describe("extractWithLlm", () => {
     const out = await extractWithLlm({ kind: "codex", label: "Codex", status: "", bin: "/opt/bin/codex" }, crawl, cli.deps);
     expect(out).toEqual(model);
     const { args, o } = cli.calls[0]!;
-    expect(args.slice(0, 6)).toEqual(["exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-s", "read-only"]);
+    expect(args.slice(0, 8)).toEqual(["exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-s", "read-only", "-m", "gpt-6-luna"]);
     expect(args).toContain("--strict-config"); // without it Codex ignores an override it does not know, leaving that tool on
     for (const feature of ["shell_tool", "unified_exec", "apps"]) expect(args[args.indexOf(feature) - 1]).toBe("--disable");
     for (const override of ['web_search="disabled"', "mcp_servers={}", "features.view_image=false"]) expect(args[args.indexOf(override) - 1]).toBe("-c");

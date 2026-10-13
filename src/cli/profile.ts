@@ -310,11 +310,16 @@ const defaultRunCli: RunCli = (bin, args, o) =>
     child.stdin.end(o.stdin);
   });
 
+// The small, fast model of each CLI: reading a few pages into a form does not need more. "haiku" is Claude Code's
+// alias for the latest Haiku; Codex has no alias, so its id is pinned and needs a bump when a newer Luna ships.
+const CLAUDE_MODEL = "haiku";
+const CODEX_MODEL = "gpt-6-luna";
+
 // The flag set that takes every tool, MCP server, setting file, slash command and saved session away from Claude Code.
 const CLAUDE_ARGS: readonly string[] = [
   "-p",
   "--model",
-  "sonnet",
+  CLAUDE_MODEL,
   "--tools",
   "",
   "--strict-mcp-config",
@@ -354,6 +359,8 @@ const codexArgs = (schemaFile: string, outFile: string): string[] => [
   "--ignore-user-config",
   "-s",
   "read-only",
+  "-m",
+  CODEX_MODEL,
   ...CODEX_TOOLS_OFF,
   "--output-schema",
   schemaFile,
