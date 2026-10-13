@@ -332,9 +332,11 @@ const CLAUDE_ARGS: readonly string[] = [
 
 // Codex has no single "no tools" switch, so each tool is turned off by name. With only the read-only sandbox it
 // still ran shell commands, read files and searched the web, which is a way out for anything a page talks it into
-// reading. The first three are `--disable`, which Codex rejects for a name it does not know: a Codex this cannot
-// lock down is not run. The rest are config overrides, which an older or newer Codex ignores when it lacks the feature.
+// reading. Every switch must fail closed: on its own Codex ignores a `-c` override it does not recognise, which
+// would leave that tool on, so `--strict-config` makes an unknown key, feature or value an error before any model
+// call (as `--disable` already is for an unknown name). A Codex that cannot be locked down this way is not run.
 const CODEX_TOOLS_OFF: readonly string[] = [
+  "--strict-config",
   ...["shell_tool", "unified_exec", "apps"].flatMap((feature) => ["--disable", feature]),
   ...[
     'web_search="disabled"',

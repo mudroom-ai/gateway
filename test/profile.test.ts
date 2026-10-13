@@ -380,6 +380,7 @@ describe("extractWithLlm", () => {
     expect(out).toEqual(model);
     const { args, o } = cli.calls[0]!;
     expect(args.slice(0, 6)).toEqual(["exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-s", "read-only"]);
+    expect(args).toContain("--strict-config"); // without it Codex ignores an override it does not know, leaving that tool on
     for (const feature of ["shell_tool", "unified_exec", "apps"]) expect(args[args.indexOf(feature) - 1]).toBe("--disable");
     for (const override of ['web_search="disabled"', "mcp_servers={}", "features.view_image=false"]) expect(args[args.indexOf(override) - 1]).toBe("-c");
     expect(args.at(-1)).toBe("-");
