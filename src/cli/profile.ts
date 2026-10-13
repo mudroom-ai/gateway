@@ -432,18 +432,18 @@ async function postJson(doFetch: typeof fetch, url: string, headers: Record<stri
   return record(parseJson(raw));
 }
 
-const ANTHROPIC_MODEL = "claude-sonnet-5-5";
+// The API-key paths use the same small models as the CLIs. Neither API has an alias for "latest", so both ids are pinned.
+const ANTHROPIC_MODEL = "claude-haiku-5-5";
 
 async function viaAnthropic(apiKey: string, prompt: string, doFetch: typeof fetch): Promise<unknown> {
   const res = await postJson(
     doFetch,
     "https://api.anthropic.com/v1/messages",
-    // The beta header belongs to `fallbacks`: a request the model's safety classifier declines is retried by the API on its recommended fallback model.
-    { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "server-side-fallback-2026-07-01" },
+    // No `fallbacks`: this model has no server-side fallback, so a declined request is reported as declined.
+    { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     {
       model: ANTHROPIC_MODEL,
       max_tokens: 16_000,
-      fallbacks: "default",
       system: SYSTEM,
       output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
       messages: [{ role: "user", content: prompt }],
@@ -458,7 +458,7 @@ async function viaAnthropic(apiKey: string, prompt: string, doFetch: typeof fetc
   return parseJson(str(answer.text));
 }
 
-const OPENAI_MODEL = "gpt-6.1-sol";
+const OPENAI_MODEL = "gpt-6-luna";
 
 async function viaOpenai(apiKey: string, prompt: string, doFetch: typeof fetch): Promise<unknown> {
   const res = await postJson(
