@@ -31,10 +31,11 @@ export const WEBSITE_NOTES = {
 } as const;
 
 /** Where the page text goes, by candidate kind: the name used in the "sending" line. */
-const PROVIDER: Record<LlmKind, string> = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode", anthropic: "Anthropic", openai: "OpenAI" };
+const PROVIDER: Record<LlmKind, string> = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode", anthropic: "Anthropic", openai: "OpenAI", deepseek: "DeepSeek" };
 const KEY_KINDS = [
   { kind: "anthropic", label: "Anthropic" },
   { kind: "openai", label: "OpenAI" },
+  { kind: "deepseek", label: "DeepSeek" },
 ] as const;
 /** Booking systems the gateway connects to: the platform supplies the catalog, so reading the site adds little. */
 const STORE_VENDORS = new Set(["square", "glossgenius"]);

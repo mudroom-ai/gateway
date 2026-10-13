@@ -39,8 +39,8 @@ On a first run (and after *Start over*) the wizard's first question is `Your web
 1. **It reads the site.** Up to 8 public pages: the start page, then the pages whose links look like services, prices, booking, hours, contact or about. It reads them once, as plain HTML, without running scripts, so a site drawn entirely by JavaScript gives it little. Only public web addresses are read; `localhost` and private network addresses are refused. From the HTML alone it recognises the booking system the site links to: Square Appointments and GlossGenius are then pre-selected in the booking system list, and for any other system it says that Gateway cannot connect to it yet.
 2. **It asks which model should read the text.** Before anything is sent it says so and lists what it found on this machine. There are three ways to supply a model:
    - a command-line tool you are already signed in to: Claude Code (`claude`) or Codex (`codex`). Claude Code runs with every tool turned off; Codex runs in its read-only sandbox with its shell, apps and web search turned off. Both run in an empty temporary folder, without Gateway's own credentials in their environment;
-   - an API key in the environment: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`;
-   - *Paste an API key*: an Anthropic or OpenAI key typed into a hidden prompt (it shows dots). The key is used for that one request and is not written to `.env`, `config.json` or any log.
+   - an API key in the environment: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `DEEPSEEK_API_KEY`;
+   - *Paste an API key*: an Anthropic, OpenAI or DeepSeek key typed into a hidden prompt (it shows dots). The key is used for that one request and is not written to `.env`, `config.json` or any log.
 
    The text of those public pages is sent to the provider you pick, as one request on your own account or key. Pick *Skip*, or press Esc, and nothing is sent.
 
