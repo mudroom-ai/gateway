@@ -871,7 +871,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         if (f.website !== undefined) log('Note: --website is only used on a first run or after "Start over".\n');
       } else {
         log(`${style.question(INTRO[0]!)}\n${INTRO.slice(1).join("\n")}\n`);
-        site = await askWebsite(p, { flag: f.website, env, log, validHours: validHoursSpec, secretKeys: CHILD_SECRET_KEYS, deps: deps.website });
+        site = await askWebsite(p, { flag: f.website, given: { name: f.name, timezone: f.timezone, currency: f.currency, hours: f.hours }, env, log, validHours: validHoursSpec, secretKeys: CHILD_SECRET_KEYS, deps: deps.website });
         log("");
       }
       const channelKnown = !!((known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID")) || known("OWNER_PHONE"));
@@ -948,18 +948,21 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       const services: ServiceAnswer[] = [];
       const savedServices = (saved?.services ?? []).map(({ name, duration_min, buffer_min, price_cents }) => ({ name, duration_min, buffer_min, price_cents }));
       // Fixed-price services from the site are offered like saved ones; there are none when anything is saved.
-      const siteServices = (site?.bookable ?? []).map((b) => ({ name: b.name, duration_min: b.duration_min ?? 60, buffer_min: 0, price_cents: b.price_cents }));
+      // A price the page wrote in a currency ("US$40") is not offered once the merchant picked another: it goes to the ask list.
+      const siteBookable = (site?.bookable ?? []).filter((b) => !b.price_currency || b.price_currency === currency);
+      const siteAsk = [...(site?.ask ?? []), ...(site?.bookable ?? []).filter((b) => !siteBookable.includes(b)).map((b) => ({ name: b.name, price_note: undefined }))].slice(0, 50);
+      const siteServices = siteBookable.map((b) => ({ name: b.name, duration_min: b.duration_min ?? 60, buffer_min: 0, price_cents: b.price_cents }));
       const prefilled = [...savedServices, ...siteServices];
       let askServices: Answers["ask_services"];
       // What the site lists with no single fixed price, so not bookable. One yes or no for all of them,
       // so every one is shown (50 at most): nothing is written that was not on screen.
       const offerAskServices = async (also: boolean) => {
-        if (platform || !site?.ask.length) return;
-        const shown = site.ask.map((s) => `  - ${cleanLine(s.name, 80)}${s.price_note ? ` (${cleanLine(s.price_note, 60)})` : ""}`);
-        log(`\nYour site ${also ? "also " : ""}lists ${site.ask.length === 1 ? "a service" : `${site.ask.length} services`} the wizard could not read one fixed price for:\n${shown.join("\n")}`);
+        if (platform || !siteAsk.length) return;
+        const shown = siteAsk.map((s) => `  - ${cleanLine(s.name, 80)}${s.price_note ? ` (${cleanLine(s.price_note, 60)})` : ""}`);
+        log(`\nYour site ${also ? "also " : ""}lists ${siteAsk.length === 1 ? "a service" : `${siteAsk.length} services`} the wizard could not read one fixed price for:\n${shown.join("\n")}`);
         log(style.dim("As ask-the-owner services, agents can read them and message you about them, but cannot book them."));
         if (await ask.confirm("List them as ask-the-owner services?")) {
-          askServices = site.ask;
+          askServices = siteAsk;
           if (goal === GOAL_BOOK && !channelKnown) {
             log('Note: with "Book appointments" alone, agents can only tell customers to contact you about these. Run `npm run init` again and pick "Book appointments and message me" to let them leave you a message.');
           }

@@ -186,11 +186,11 @@ describe("buildProfile", () => {
     ];
     const usd = buildProfile(page(rows), answer(services, { currency: "USD" }), anyHours);
     expect(usd.bookable).toEqual([
-      { name: "Gel Nails", price_cents: 4000 },
-      { name: "Manicure", price_cents: 2500 },
+      { name: "Gel Nails", price_cents: 4000, price_currency: "USD" },
+      { name: "Manicure", price_cents: 2500, price_currency: "USD" },
     ]);
     expect(usd.ask.map((s) => s.name)).toEqual(["Lash Lift", "Brow Tint"]);
-    expect(buildProfile(page(rows), answer(services, { currency: "SGD" }), anyHours).bookable).toEqual([{ name: "Lash Lift", price_cents: 8000 }]);
+    expect(buildProfile(page(rows), answer(services, { currency: "SGD" }), anyHours).bookable).toEqual([{ name: "Lash Lift", price_cents: 8000, price_currency: "SGD" }]);
     expect(buildProfile(page(rows), answer(services), anyHours).bookable).toEqual([]);
   });
 
@@ -210,6 +210,10 @@ describe("buildProfile", () => {
     expect(profile.products).toEqual(["Tote Bag", "Kitten Heels"]); // "Gift Cards" is not on the page
     expect(profile.shop).toBe(true);
     expect([profile.bookable, profile.ask]).toEqual([[{ name: "Bag Repair", price_cents: 4000 }], []]);
+    // Every product is counted, not only the first MAX_ASK.
+    const many = Array.from({ length: 60 }, (_, i) => `Item${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))} Thing`);
+    const manyRaw = answer(many.map((n) => product(n, null)));
+    expect(buildProfile(page(many.join("\n")), manyRaw, anyHours).products).toHaveLength(60);
     // The same row without the label is a service like any other.
     expect(buildProfile(page(rows), answer([service("Tote Bag", "Tote Bag $159", "$159")]), anyHours)).toMatchObject({ shop: false, products: [], bookable: [{ name: "Tote Bag", price_cents: 15900 }] });
   });

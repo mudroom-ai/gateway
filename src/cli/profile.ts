@@ -63,7 +63,13 @@ export interface SiteProfile {
   hours?: string | undefined;
   vendor?: SiteVendor | undefined;
   /** Services whose page line states one fixed price. */
-  bookable: { name: string; duration_min?: number | undefined; price_cents: number }[];
+  bookable: {
+    name: string;
+    duration_min?: number | undefined;
+    price_cents: number;
+    /** Set when the page wrote the currency with the price ("US$40"): the price is only right in that currency. */
+    price_currency?: string | undefined;
+  }[];
   /** Every other service the page names. `price_note` is the page's own price phrase. */
   ask: { name: string; price_note?: string | undefined }[];
   /** Names the model marked as products for sale: left out of both lists, since a purchase is not booked or asked about. */
@@ -714,11 +720,11 @@ function fixedRow(lined: string, at: number, length: number, name: Span, amount:
 }
 
 /**
- * The fixed price, in cents, that the page states for the service on the line the model quoted; undefined when there
+ * The fixed price, in cents, with the currency the page wrote beside it (undefined for a bare symbol), that the page states for the service on the line the model quoted; undefined when there
  * is no such line or the price is anything but fixed. `currency` is the one the site was found to use: an amount
  * with a country before its dollar sign counts only when it names that currency.
  */
-function fixedPrice(corpus: Corpus, nameKey: string, evidence: string, currency: string | undefined): number | undefined {
+function fixedPrice(corpus: Corpus, nameKey: string, evidence: string, currency: string | undefined): { cents: number; currency?: string | undefined } | undefined {
   const quote = foldLine(cleanLine(evidence, EVIDENCE_MAX * 2));
   if (!quote || Array.from(quote).length > EVIDENCE_MAX || quote.includes("%")) return undefined;
   const amounts = amountsIn(quote);
@@ -733,7 +739,9 @@ function fixedPrice(corpus: Corpus, nameKey: string, evidence: string, currency:
   const hits = found.filter((at) => startsLine(corpus.lined, at));
   const name: Span = [nameAt, nameAt + nameKey.length];
   // Every place the line occurs must agree, or the page is ambiguous about this price.
-  return hits.length > 0 && hits.every((at) => fixedRow(corpus.lined, at, quote.length, name, [amount.start, amount.end])) ? amount.cents : undefined;
+  return hits.length > 0 && hits.every((at) => fixedRow(corpus.lined, at, quote.length, name, [amount.start, amount.end]))
+    ? { cents: amount.cents, ...(amount.currency ? { currency: amount.currency } : {}) }
+    : undefined;
 }
 
 /**
@@ -869,15 +877,15 @@ export function buildProfile(crawl: CrawlResult, raw: unknown, validHours: (spec
       seen.add(id);
       // Something to buy, not to book or to ask the owner about.
       if (str(item.kind) === "product") {
-        if (profile.products.length < MAX_ASK) profile.products.push(named.name);
+        if (profile.products.length < MAX_RAW_SERVICES) profile.products.push(named.name);
         continue;
       }
       // The model's own label is never a reason to offer a price, only a reason not to.
-      const cents = NOT_FIXED.has(str(item.price_kind)) ? undefined : fixedPrice(corpus, named.key, str(item.evidence), profile.currency);
-      if (cents !== undefined && profile.bookable.length < MAX_BOOKABLE) {
+      const price = NOT_FIXED.has(str(item.price_kind)) ? undefined : fixedPrice(corpus, named.key, str(item.evidence), profile.currency);
+      if (price !== undefined && profile.bookable.length < MAX_BOOKABLE) {
         const minutes = item.duration_min;
         const timed = typeof minutes === "number" && Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
-        profile.bookable.push({ name: named.name, ...(timed ? { duration_min: minutes } : {}), price_cents: cents });
+        profile.bookable.push({ name: named.name, ...(timed ? { duration_min: minutes } : {}), price_cents: price.cents, ...(price.currency ? { price_currency: price.currency } : {}) });
       } else if (profile.ask.length < MAX_ASK) {
         const note = priceNote(corpus, named.key, str(item.price_text));
         profile.ask.push({ name: named.name, ...(note ? { price_note: note } : {}) });

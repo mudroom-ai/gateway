@@ -72,6 +72,8 @@ export async function askWebsite(
     flag: string | undefined;
     env: NodeJS.ProcessEnv;
     log: (m: string) => void;
+    /** Answers already given as flags: the summary does not offer the site's value for these. */
+    given?: { name?: string | undefined; timezone?: string | undefined; currency?: string | undefined; hours?: string | undefined } | undefined;
     /** True when the wizard's hours parser and the config schema both accept the spec. */
     validHours: (spec: string) => boolean;
     /** Env names kept away from a model CLI: the gateway's own secrets. */
@@ -162,12 +164,15 @@ export async function askWebsite(
     return crawlOnly;
   }
 
+  const given = ctx.given ?? {};
   const found: string[] = [];
   if (profile.name) found.push(`  Name: ${cleanLine(profile.name, 80)}`);
   if (profile.timezone) found.push(`  Time zone: ${cleanLine(profile.timezone, 64)}`);
   if (profile.currency) found.push(`  Currency: ${cleanLine(profile.currency, 3)}`);
   if (profile.hours) found.push(`  Hours: ${cleanLine(profile.hours, 200)}`);
-  const [fixed, other] = [profile.bookable.length, profile.ask.length];
+  // A price written in a currency the flag overrides is offered as ask-the-owner, not as a fixed price.
+  const kept = profile.bookable.filter((b) => !b.price_currency || !given.currency || b.price_currency === given.currency.trim().toUpperCase()).length;
+  const [fixed, other] = [kept, profile.ask.length + profile.bookable.length - kept];
   if (fixed || other) found.push(`  Services: ${servicesFound(fixed, other)}`);
   if (profile.products.length) {
     const names = profile.products.slice(0, PRODUCTS_SHOWN).map((n) => cleanLine(n, 40));
@@ -175,12 +180,18 @@ export async function askWebsite(
     found.push(`  Products: ${profile.products.length} left out (${names.join(", ")}${more ? ` and ${more} more` : ""})`);
   }
   if (!found.length) {
-    log(`\nNothing usable was found on your site. ${WEBSITE_NOTES.carryOn}`);
+    log(`\nNothing usable was found on your site${profile.shop ? " (it looks like an online shop)" : ""}. ${WEBSITE_NOTES.carryOn}`);
     return profile;
   }
   // What the summary promises is what the questions below do: a default for each of these, one yes or no for
   // the services without a fixed price. A connected booking platform supplies hours and services itself.
-  const defaults = [profile.name && "name", profile.timezone && "time zone", profile.currency && "currency", !store && profile.hours && "hours", !store && fixed > 0 && "fixed-price services"].filter(
+  const defaults = [
+    profile.name && given.name === undefined && "name",
+    profile.timezone && given.timezone === undefined && "time zone",
+    profile.currency && given.currency === undefined && "currency",
+    !store && profile.hours && given.hours === undefined && "hours",
+    !store && fixed > 0 && "fixed-price services",
+  ].filter(
     (d): d is string => !!d,
   );
   const notes: string[] = [];

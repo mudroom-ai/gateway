@@ -350,6 +350,37 @@ describe("init wizard: website step", () => {
     expect(only.prompter.prompts.some((q) => q.startsWith("  Service") || q.startsWith("List them") || q.startsWith("Hours"))).toBe(false);
   });
 
+  // protects: a price the page wrote in a currency ("US$40") is offered as a bookable service only when
+  //   the merchant keeps that currency; with another it goes to the ask list. The summary does not offer
+  //   a site value a flag already answers, and a shop with nothing else usable is still called one.
+  // fails_when: USD 40 is offered as 40.00 in CAD, a flagged field is listed as a default, or the
+  //   nothing-found message drops the shop classification.
+  // seam: InitDeps.website; buildProfile runs for real on the synthetic page.
+  it("moves a price in another currency to the ask list and lists only the defaults a flag leaves", async () => {
+    const usd: WebsiteDeps = {
+      crawl: async () => ({ url: "https://example.com/", pages: [{ url: "https://example.com/", title: "Example Salon", text: "Example Salon\nGel Nails US$40" }], jsonLd: [] }),
+      detect: () => [CLAUDE],
+      extract: async () => ({ business: { name: "Example Salon", currency: "USD" }, services: [{ name: "Gel Nails", evidence: "Gel Nails US$40", price_text: "US$40", duration_min: null }] }),
+    };
+    const r = await wizard(["--currency", "CAD"], ["example.com", "", "", "", NOT_YET, "", "", "", true, "", ""], usd); // address, provider, goal, system, not ready, name, zone, currency (flag CAD kept), ask services, no service, hours
+    expect(r.code).toBe(0);
+    expect(r.prompter.remaining).toBe(0);
+    expect(r.out).toContain("Offered as a default below: name.");
+    expect(r.out).toContain("  Services: 1 listed, none with a fixed price");
+    expect(r.out).toContain("  - Gel Nails\n");
+    expect(r.prompter.prompts.some((q) => q.includes("Service 1 name") && q.includes("Gel Nails"))).toBe(false);
+    expect(r.config().services).toEqual([]);
+    expect(r.config().ask_services.map((s) => s.name)).toEqual(["Gel Nails"]);
+
+    const empty: WebsiteDeps = {
+      crawl: async () => ({ url: "https://example.com/", pages: [{ url: "https://example.com/", title: "x", text: "Nothing here" }], jsonLd: [] }),
+      detect: () => [CLAUDE],
+      extract: async () => ({ booking_system: { how_customers_book: "online_store" } }),
+    };
+    const shop = await wizard([], ["example.com", "", "", "", NOT_YET, "", "", ""], empty);
+    expect(shop.out).toContain("Nothing usable was found on your site (it looks like an online shop).");
+  });
+
   // protects: nothing read from the site is written unless its question was asked: with Square the
   //   services and hours questions are skipped, so the site's services and hours stay out of config.json.
   // fails_when: the site's hours become the unasked default, or its services are added behind a
