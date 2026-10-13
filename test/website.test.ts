@@ -184,7 +184,7 @@ describe("crawlSite redirects", () => {
   // fails_when: the rules are applied to the start URL only, or the Location value reaches the message.
   // seam: deps.httpGet (which, like the real transport, never follows a redirect).
   it("refuses a redirect to a blocked address without requesting it", async () => {
-    for (const location of ["http://169.254.169.254/latest/meta-data/", "http://localhost:8080/admin", "http://[::1]/", "//printer.local/", "file:///etc/hosts", "https://user:pw@example.org/"]) {
+    for (const location of ["http://169.254.169.254/latest/meta-data/", "http://localhost:8080/admin", "http://[::1]/", "//printer.local/", "file:///etc/hosts", "https://user@example.org/"]) {
       const t = scripted({ "https://example.com/": { status: 302, location } });
       const err = await crawlSite(new URL("https://example.com/"), { httpGet: t.get }).catch((e: unknown) => e);
       expect(err, location).toBeInstanceOf(Error);
@@ -325,7 +325,7 @@ describe("address rules", () => {
     const plain = vi.spyOn(http, "request").mockImplementation(reached);
     const tls = vi.spyOn(https, "request").mockImplementation(reached);
 
-    for (const url of ["http://127.0.0.1:8080/", "http://[::1]/", "http://2130706433/", "https://localhost/", "https://printer.local./", "https://[::ffff:10.0.0.1]/", "https://user:pw@example.com/", "ftp://example.com/"]) {
+    for (const url of ["http://127.0.0.1:8080/", "http://[::1]/", "http://2130706433/", "https://localhost/", "https://printer.local./", "https://[::ffff:10.0.0.1]/", "https://user@example.com/", "ftp://example.com/"]) {
       await expect(defaultHttpGet(new URL(url), { timeoutMs: 1000, maxBytes: 1000 }), url).rejects.toThrow(new Error(CRAWL_ERRORS.blocked));
     }
     expect(plain).not.toHaveBeenCalled();
@@ -344,7 +344,7 @@ describe("normalizeWebsiteUrl", () => {
     expect(normalizeWebsiteUrl("www.Example.com/salon#hours").href).toBe("https://www.example.com/salon");
     expect(normalizeWebsiteUrl("http://example.com:8080/a?b=1").href).toBe("http://example.com:8080/a?b=1");
 
-    for (const bad of ["", "   ", "localhost", "salon", "ftp://example.com", "file:///etc/hosts", "javascript:alert(1)", "mailto:hello@example.com", "https://user:pw@example.com", "user@example.com", "my salon.com", "http://[::1]/"]) {
+    for (const bad of ["", "   ", "localhost", "salon", "ftp://example.com", "file:///etc/hosts", "javascript:alert(1)", "mailto:hello@example.com", "https://user@example.com", "user@example.com", "my salon.com", "http://[::1]/"]) {
       let message = "";
       try {
         normalizeWebsiteUrl(bad);
