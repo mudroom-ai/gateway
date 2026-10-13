@@ -269,10 +269,13 @@ class KeyTaken extends Error {}
 
 // ---- ops ----
 
-/** Message ops for the configured owner channel, or undefined when there is none (the tools and routes are then not registered). */
+/**
+ * Message ops for the configured owner channel, or undefined when there is none or it only writes the log
+ * (the tools and routes are then not registered: a message nobody reads must not be reported as delivered).
+ */
 export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
   const { config, store, channel } = deps;
-  if (!channel) return undefined;
+  if (!channel || channel.logOnly) return undefined;
   const merchant = config.merchant_id;
   const enabled = deps.settings.messages_enabled;
   const mode: ThreadMode = supportsThreads(channel) ? "two_way" : "one_way";

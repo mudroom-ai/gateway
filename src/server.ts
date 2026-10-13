@@ -36,7 +36,7 @@ export function toBookingConnector(config: Config, c: CalendarConnector | Bookin
 /**
  * Core ops bound to their dependencies; served by the HTTP adapter.
  * `owner` defaults to createOwnerChannel; pass null for none (tests). Message ops exist only
- * when there is a channel: no channel means no leave_message routes at all.
+ * when a channel reaches the owner: no channel, or the log fallback, means no leave_message routes at all.
  */
 export function buildOps(
   config: Config,

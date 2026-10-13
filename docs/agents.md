@@ -69,7 +69,7 @@ Get a `quote_id`: send `service_id` and a returned slot's `start` and `end` as t
 
 Message the owner for missing services, questions, or requests needing a human decision.
 
-Messaging requires an owner channel: **Slack** supports two-way replies; **Twilio or the log** supports one-way notifications. Without a channel, messaging routes are absent and `/llms.txt` omits them. `MESSAGES_ENABLED=false` disables them with `messages_disabled`.
+Messaging requires an owner channel that reaches a person: **Slack** supports two-way replies; **Twilio** supports one-way notifications. Without one (including the GlossGenius log fallback, which only records booking notices), messaging routes are absent and `/llms.txt` omits them. `MESSAGES_ENABLED=false` disables them with `messages_disabled`.
 
 ### Message workflow
 

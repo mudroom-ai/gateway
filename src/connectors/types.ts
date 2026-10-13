@@ -113,6 +113,8 @@ export interface BookingConnector {
  */
 export interface CommunicationConnector {
   notify(message: string): Promise<void>;
+  /** True when `notify` only writes the gateway's log and no person is told. The core then offers no leave_message routes. */
+  readonly logOnly?: boolean;
   /** Post the first message of a thread; returns the provider's thread handle (Slack: the message ts). */
   openThread?(opener: ThreadOpener): Promise<{ provider_ref: string }>;
   /** Post a follow-up into an existing thread (agent follow-ups, gateway notices). */

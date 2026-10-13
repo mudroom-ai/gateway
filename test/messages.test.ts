@@ -8,6 +8,7 @@ import { parseConfig } from "../src/config.js";
 import { ConnectorError, type ChannelContext, type CommunicationConnector, type OwnerMessageHandler, type PostedQuery, type ThreadOpener } from "../src/connectors/types.js";
 import { runOp } from "../src/adapters/http.js";
 import { CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
+import { logOwnerChannel } from "../src/notify/owner.js";
 import { Store } from "../src/store/sqlite.js";
 import type { Booking, Service } from "../src/types.js";
 
@@ -663,6 +664,17 @@ describe("one-way and no channel", () => {
   it("no channel: no message ops at all", () => {
     expect(
       createMessageOps({ config: parseConfig({ name: "x", timezone: "UTC", currency: "USD", hours: {} }), store: new Store(":memory:"), channel: undefined, settings: { messages_enabled: true } }),
+    ).toBeUndefined();
+  });
+
+  it("log-only channel: no message ops at all", () => {
+    expect(
+      createMessageOps({
+        config: parseConfig({ name: "x", timezone: "UTC", currency: "USD", hours: {} }),
+        store: new Store(":memory:"),
+        channel: logOwnerChannel(() => {}),
+        settings: { messages_enabled: true },
+      }),
     ).toBeUndefined();
   });
 });
