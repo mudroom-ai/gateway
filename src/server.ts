@@ -226,7 +226,7 @@ export function createApp(
   const msgMode = messages?.enabled ? messages.mode : undefined;
   app.get("/", discoveryLimit, homeHandler(config, connector, pub, msgMode, settings.demo));
   app.get(["/llms.txt", "/.well-known/llms.txt"], discoveryLimit, agentInstructionsHandler(config, connector, pub, msgMode, settings.demo));
-  // Its own counter: the page polls every 10 s and must not spend a visitor's agent quota.
+  // Its own counter: the page polls every few seconds and must not spend a visitor's agent quota.
   if (demo) feedRoute(app, demo.traffic, requestRateLimit(config.limits, sendError, ipOpts));
   app.get("/openapi.json", discoveryLimit, openApiHandler(config, connector, pub, msgMode));
   app.get("/robots.txt", discoveryLimit, robotsHandler(pub));

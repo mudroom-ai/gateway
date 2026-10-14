@@ -9,6 +9,8 @@ import { DateTime } from "luxon";
 import type { Config } from "../config.js";
 
 export const REPO_URL = "https://github.com/mudroom-ai/gateway";
+/** How often the page polls /demo/feed; one poll per this many seconds stays well under the feed's per_ip_per_min limit. */
+export const FEED_POLL_SECONDS = 5;
 /** How long a demo booking lives before it cancels itself. */
 export const DEMO_BOOKING_TTL_MIN = 60;
 
@@ -263,7 +265,7 @@ ${ask}
   </section>
 
   <section id="activity" aria-labelledby="activity-title">
-    <div class="section-head"><h2 id="activity-title">Live activity</h2><span class="live"><span class="dot on"></span>Updates every 10 seconds</span></div>
+    <div class="section-head"><h2 id="activity-title">Live activity</h2><span class="live"><span class="dot on"></span>Updates every ${FEED_POLL_SECONDS} seconds</span></div>
     <div class="stats">
       <div class="stat"><b id="s-today">0</b><span>agents today</span></div>
       <div class="stat"><b id="s-week">0</b><span>agents this week</span></div>
@@ -348,7 +350,7 @@ function render(f){
   first=false;
 }
 function poll(){fetch("/demo/feed",{headers:{accept:"application/json"}}).then(function(r){return r.ok?r.json():null}).then(function(f){if(f)render(f)}).catch(function(){})}
-poll();setInterval(poll,10000);
+poll();setInterval(poll,${FEED_POLL_SECONDS * 1000});
 })();
 </script>
 </body></html>
