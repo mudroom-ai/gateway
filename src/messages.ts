@@ -1,5 +1,5 @@
 // leave_message: an agent that cannot book leaves a message for the owner, the
-// owner types a reply in their own channel (Slack thread), and the agent reads it
+// owner types a reply in their own channel (Slack thread, WhatsApp quote), and the agent reads it
 // with get_thread. Durable in SQLite (threads, thread_messages, owner_outbox,
 // message_requests in store/sqlite.ts).
 //
@@ -191,6 +191,8 @@ const OWNER_CLOSE_WORDS = /^(close|closed|done)[.!]?$/i;
 export const MIRROR_PREFIX = "Reply from the owner:";
 /** Posted to the channel when a top-level owner message cannot be matched to one thread. */
 export const SEVERAL_WAITING_HINT = "Several customers are waiting; please reply in the thread for each.";
+/** The same hint for a flat channel (no threads): the owner quotes the message instead. */
+export const SEVERAL_WAITING_HINT_FLAT = "Several customers are waiting; please swipe to reply on the message for each.";
 const HINT_EVERY_MS = 60_000;
 /** A fetched top-level message is matched to a thread only if no thread changed from this long before it was sent (clocks differ). */
 export const BACKFILL_SKEW_MS = 10_000;
@@ -377,9 +379,11 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     if (t.service_id) lines.push(`About: ${service?.name ?? t.service_id}`);
     lines.push("", text, "");
     lines.push(
-      t.mode === "two_way"
-        ? "Reply in this thread and the assistant will pass it on. If the assistant does not come back, the customer's contact is above."
-        : "Replies cannot be passed back from here: contact the customer directly.",
+      t.mode !== "two_way"
+        ? "Replies cannot be passed back from here: contact the customer directly."
+        : channel?.flat
+          ? "Reply to this message (swipe to reply) and the assistant will pass it on; a plain reply works too when this is the only customer waiting. If the assistant does not come back, the customer's contact is above."
+          : "Reply in this thread and the assistant will pass it on. If the assistant does not come back, the customer's contact is above.",
     );
     return lines.join("\n");
   }
@@ -761,7 +765,7 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       if (!m.backfilled && nowMs - lastHintMs >= HINT_EVERY_MS) {
         lastHintMs = nowMs;
         try {
-          channel!.notify(SEVERAL_WAITING_HINT).catch((e) => log(`[gateway] owner hint failed: ${errMsg(e)}`));
+          channel!.notify(channel!.flat ? SEVERAL_WAITING_HINT_FLAT : SEVERAL_WAITING_HINT).catch((e) => log(`[gateway] owner hint failed: ${errMsg(e)}`));
         } catch (e) {
           log(`[gateway] owner hint failed: ${errMsg(e)}`);
         }
@@ -770,10 +774,11 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       return "ignored";
     }
     const t = waiting[0]!;
-    if (m.backfilled) {
-      // "Exactly one thread waiting" must have been true when the owner typed, not just now. Another thread opening,
-      // closing, being answered or getting a follow-up in the window means the message may belong to someone else.
-      // The waiting thread's own opening inside that window is the prompt being answered, not that ambiguity.
+    if (m.backfilled || m.sent_at_ms !== undefined) {
+      // "Exactly one thread waiting" must have been true when the owner typed, not just now (a Slack catch-up or a
+      // delayed webhook retry). Another thread opening, closing, being answered or getting a follow-up in the window
+      // means the message may belong to someone else. The waiting thread's own opening inside that window is the
+      // prompt being answered, not that ambiguity.
       const sent = m.sent_at_ms;
       if (typeof sent !== "number" || !Number.isFinite(sent)) {
         log(`[gateway] top-level owner message from a gap ignored: threads changed since it was typed`);
@@ -789,7 +794,8 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     }
     const routed: OwnerInboundMessage = { ...m, provider_ref: t.provider_ref! };
     const outcome = close ? await ownerClose(routed) : await ownerReply(routed);
-    if (outcome === "accepted") postNotice(t, `${MIRROR_PREFIX}\n\n${text}`);
+    // The mirror puts the reply where the thread is read; a flat channel has no thread, and the owner just typed it.
+    if (outcome === "accepted" && !channel!.flat) postNotice(t, `${MIRROR_PREFIX}\n\n${text}`);
     return outcome;
   }
 

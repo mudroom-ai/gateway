@@ -7,9 +7,9 @@
 //   implements it directly: it returns ready-made slots, sets prices and books,
 //   cancels and reschedules itself. CalendarBookingConnector adapts a
 //   CalendarConnector to it.
-// - CommunicationConnector: how the merchant hears about agent bookings (Twilio SMS, or
-//   a log line). Works with every booking connector; a connector that cannot
-//   write to the merchant's own system (shadow mode) adds `ownerNotes`.
+// - CommunicationConnector: how the merchant hears about agent bookings (Twilio SMS,
+//   Slack, WhatsApp, or a log line). Works with every booking connector; a connector
+//   that cannot write to the merchant's own system (shadow mode) adds `ownerNotes`.
 //
 // Connectors throw ConnectorError; core ops map it into the shared error body.
 
@@ -115,6 +115,16 @@ export interface CommunicationConnector {
   notify(message: string): Promise<void>;
   /** True when `notify` only writes the gateway's log and no person is told. The core then offers no leave_message routes. */
   readonly logOnly?: boolean;
+  /**
+   * True for a channel with no threads (WhatsApp): the owner answers by quoting the message or with a plain reply.
+   * The core then words the opener for that and does not mirror a top-level reply back into the thread.
+   */
+  readonly flat?: boolean;
+  /**
+   * An inbound HTTP endpoint the provider calls (WhatsApp's webhook). The server mounts it at `path`, outside /api
+   * and before the JSON parser, and hands over the raw body so the channel can verify the provider's signature.
+   */
+  readonly webhook?: { path: string; handle(req: InboundWebhookRequest): Promise<InboundWebhookResponse> };
   /** Post the first message of a thread; returns the provider's thread handle (Slack: the message ts). */
   openThread?(opener: ThreadOpener): Promise<{ provider_ref: string }>;
   /** Post a follow-up into an existing thread (agent follow-ups, gateway notices). */
@@ -139,6 +149,21 @@ export interface CommunicationConnector {
   checkAccess?(): Promise<void>;
   /** Live state for /healthz. */
   status?(): { connected: boolean; last_error?: string };
+}
+
+export interface InboundWebhookRequest {
+  method: string;
+  /** Query string, one value per key. */
+  query: Record<string, string>;
+  /** Lower-cased header names. */
+  headers: Record<string, string>;
+  rawBody: Buffer;
+}
+
+export interface InboundWebhookResponse {
+  status: number;
+  /** text/plain body (a handshake challenge, or a short reason). */
+  body?: string;
 }
 
 export interface ThreadOpener {
@@ -184,11 +209,14 @@ export interface OwnerInboundMessage {
   user_id: string;
   text: string;
   /**
-   * True when the channel fetched it after a gap instead of receiving it live. The core then skips hints about it and,
-   * for a top-level message, needs `sent_at_ms` to check which thread was waiting when it was typed.
+   * True when the channel fetched it after a gap instead of receiving it live. The core then skips hints about it and
+   * requires `sent_at_ms` on a top-level message.
    */
   backfilled?: boolean;
-  /** When the owner sent it, by the provider's clock. Required with `backfilled`. */
+  /**
+   * When the owner sent it, by the provider's clock (epoch ms). For a top-level (unquoted) message, the core checks
+   * that no thread changed since `sent_at_ms` before matching it to the waiting thread. Required with `backfilled`.
+   */
   sent_at_ms?: number;
 }
 

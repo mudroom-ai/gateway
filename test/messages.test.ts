@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { ConnectorError, type ChannelContext, type CommunicationConnector, type OwnerMessageHandler, type PostedQuery, type ThreadOpener } from "../src/connectors/types.js";
 import { runOp } from "../src/adapters/http.js";
-import { CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
+import { CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, SEVERAL_WAITING_HINT_FLAT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
 import { logOwnerChannel } from "../src/notify/owner.js";
 import { Store } from "../src/store/sqlite.js";
 import type { Booking, Service } from "../src/types.js";
@@ -505,6 +505,24 @@ describe("owner side", () => {
     expect(channel.notices).toEqual([]);
   });
 
+  it("a flat channel (WhatsApp): the opener says to quote the message, a top-level reply is not mirrored, and the hint says to swipe", async () => {
+    const channel = Object.assign(new FakeChannel(), { flat: true as const });
+    const { ops } = setup({ channel });
+    const r = await leaveOk(ops);
+    expect(channel.opened[0]!.text).toContain("swipe to reply");
+    expect(channel.opened[0]!.text).not.toContain("in this thread");
+    expect(await ops.onOwnerMessage({ provider_msg_id: "wamid.1", user_id: "12025550199", text: "Yes, cats welcome." })).toBe("accepted");
+    expect(channel.acks).toEqual(["wamid.1"]);
+    await flush();
+    expect(channel.posts).toEqual([]);
+    const g = await ops.getThread({ thread_id: r.thread_id, read_token: r.read_token });
+    expect(g.ok && g.data.messages.at(-1)).toMatchObject({ from: "owner", text: "Yes, cats welcome." });
+    await leaveOk(ops, { customer: { name: "Bo", email: "bo@example.com" } });
+    await leaveOk(ops, { customer: { name: "Cy", email: "cy@example.com" } });
+    expect(await ops.onOwnerMessage({ provider_msg_id: "wamid.2", user_id: "12025550199", text: "Which one?" })).toBe("ignored");
+    expect(channel.notices).toEqual([SEVERAL_WAITING_HINT_FLAT]);
+  });
+
   it("a top-level message fetched after a gap is the reply only if no thread changed since it was typed", async () => {
     const { ops, channel, store, advance } = setup();
     const a = await leaveOk(ops); // 17:00:00
@@ -515,6 +533,11 @@ describe("owner side", () => {
     expect(await ops.onOwnerMessage({ provider_msg_id: "g0", user_id: "U1", text: "Yes, 3pm", backfilled: true })).toBe("ignored");
     // Typed before the thread existed.
     expect(await ops.onOwnerMessage(top("g1", Date.parse("2026-10-08T16:59:00Z")))).toBe("ignored");
+    // Prompt reply typed 2s after the opener (within BACKFILL_SKEW_MS) is accepted; the thread's own opening does not block it.
+    const prompt = setup();
+    const p1 = await leaveOk(prompt.ops); // 17:00:00
+    expect(await prompt.ops.onOwnerMessage({ provider_msg_id: "wamid.fast", user_id: "12025550199", text: "Yes, 3pm", sent_at_ms: Date.parse("2026-10-08T17:00:02Z") })).toBe("accepted");
+    expect(prompt.store.getThread(p1.thread_id)!.state).toBe("answered");
     // Typed while only this thread waited and nothing has changed since: accepted.
     expect(await ops.onOwnerMessage(top("g2", typed))).toBe("accepted");
     expect(store.getThread(a.thread_id)!.state).toBe("answered");
@@ -526,6 +549,9 @@ describe("owner side", () => {
     s2.advance(60_000);
     await s2.ops.closeThread({ thread_id: second.thread_id, read_token: second.read_token });
     expect(await s2.ops.onOwnerMessage(top("g3", typed))).toBe("ignored");
+    expect(s2.store.getThread(first.thread_id)!.state).toBe("awaiting_owner");
+    // Same guard applies to a live webhook delivery carrying sent_at_ms without backfilled (e.g. a delayed WhatsApp retry).
+    expect(await s2.ops.onOwnerMessage({ provider_msg_id: "wamid.late", user_id: "12025550199", text: "Yes, 3pm", sent_at_ms: typed })).toBe("ignored");
     expect(s2.store.getThread(first.thread_id)!.state).toBe("awaiting_owner");
     expect(channel.notices).toEqual([]);
   });

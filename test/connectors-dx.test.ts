@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { CHANNEL_GUIDES } from "../src/cli/init-channel.js";
 import { SETUP_GUIDES } from "../src/cli/init.js";
 
-const CONNECTORS = ["google", "square", "glossgenius", "twilio", "slack"] as const;
+const CONNECTORS = ["google", "square", "glossgenius", "twilio", "slack", "whatsapp"] as const;
 
 /** Files under src/connectors that are not connectors themselves. */
 const HELPERS = new Set(["types.ts", "calendar.ts", "square-oauth.ts", "slack-socket.ts"]);

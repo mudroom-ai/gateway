@@ -46,14 +46,20 @@ import { ConnectorError, type CalendarConnector } from "../connectors/types.js";
 import { maskPhone } from "../connectors/twilio.js";
 import {
   SLACK_ENV_KEYS,
+  WHATSAPP_ENV_KEYS,
   askOwnerChannel,
   channelEnvLines,
   channelFromFlags,
   checkSlack,
+  checkWhatsapp,
   defaultSlackFactory,
+  defaultWhatsappFactory,
+  whatsappWebhookLines,
   type OwnerSms,
   type SlackAnswer,
   type SlackCheckFactory,
+  type WhatsappAnswer,
+  type WhatsappCheckFactory,
 } from "./init-channel.js";
 import { docUrl, openBrowser, showGuide, type SetupGuide } from "./guide.js";
 import { askWebsite, type WebsiteDeps } from "./init-website.js";
@@ -101,7 +107,7 @@ export const GOAL_ITEMS: PickItem[] = [
 ];
 export const GOAL_DESCRIPTION = [
   "  Book appointments: agents find times, quote, book, cancel and reschedule",
-  "  ...and message me: agents also leave you a message you answer in Slack, or you get a text per booking",
+  "  ...and message me: agents also leave you a message you answer in Slack or WhatsApp, or you get a text per booking",
 ];
 const [GOAL_BOOK, GOAL_MESSAGE] = [0, 1];
 /** Asked first when config.json or .env is already there: nothing saved is kept or dropped without the merchant choosing. */
@@ -189,7 +195,16 @@ Options (env fallback in brackets, used with --non-interactive):
   --slack-app-token <t>    App-level token with connections:write, xapp-... [SLACK_APP_TOKEN]
   --slack-channel <id>     Channel ID the app is invited to, C... [SLACK_CHANNEL_ID]
   --slack-owner-ids <ids>  Optional comma-separated Slack user ids whose replies count as the owner's
-                           [SLACK_OWNER_USER_IDS] (first three all or none; Slack wins over Twilio)
+                           [SLACK_OWNER_USER_IDS] (first three all or none; Slack wins over WhatsApp and Twilio)
+  --whatsapp-token <t>     Owner channel (whatsapp), any booking system: agent messages and booking notices
+                           on the owner's WhatsApp, answered by quoting the message. Meta Cloud API access
+                           token [WHATSAPP_ACCESS_TOKEN]; needs --owner-phone and a public HTTPS URL for
+                           Meta's webhook (PUBLIC_URL, printed with the verify token after setup)
+  --whatsapp-phone-id <id> Phone number ID of the sending number [WHATSAPP_PHONE_NUMBER_ID]
+  --whatsapp-app-secret <s> The Meta app's App Secret, which signs webhook deliveries [WHATSAPP_APP_SECRET]
+  --whatsapp-verify-token <t> Webhook verify token [WHATSAPP_VERIFY_TOKEN] (generated when omitted)
+  --whatsapp-template <n>  Optional approved template, name or name:lang, for messages outside the
+                           24-hour window [WHATSAPP_TEMPLATE] (token, phone id and secret all or none)
   --owner-phone <e164>     Owner SMS (twilio), any booking system: text this phone about each agent
                            booking, cancel and reschedule [OWNER_PHONE]
   --twilio-sid <sid>       Twilio Account SID for that SMS [TWILIO_ACCOUNT_SID]
@@ -404,6 +419,7 @@ const BACKEND_KEYS = [
   "TWILIO_FROM",
   "OWNER_PHONE",
   ...SLACK_ENV_KEYS,
+  ...WHATSAPP_ENV_KEYS,
 ] as const;
 const WIZARD_KEYS: readonly string[] = [...BACKEND_KEYS, "PORT"];
 /**
@@ -427,7 +443,7 @@ export const hasSavedBackend = (env: Record<string, string>) =>
   !!(env.SQUARE_ACCESS_TOKEN && env.SQUARE_LOCATION_ID) ||
   !!((env.GOOGLE_SERVICE_ACCOUNT_FILE || env.GOOGLE_SERVICE_ACCOUNT_JSON) && env.GOOGLE_CALENDAR_ID);
 
-export type { OwnerSms, SlackAnswer } from "./init-channel.js";
+export type { OwnerSms, SlackAnswer, WhatsappAnswer } from "./init-channel.js";
 
 export type Backend = (
   | { kind: "google"; keyFile: string; calendarId: string }
@@ -441,7 +457,7 @@ export type Backend = (
       appId?: string | undefined;
       appSecret?: string | undefined;
     }
-) & { owner?: OwnerSms | undefined; slack?: SlackAnswer | undefined };
+) & { owner?: OwnerSms | undefined; slack?: SlackAnswer | undefined; whatsapp?: WhatsappAnswer | undefined };
 
 /**
  * .env contents. Wizard-owned keys come from the answers; writing one backend drops the other
@@ -697,6 +713,7 @@ export interface InitDeps {
   makeGlossGenius?: GlossGeniusCheckFactory;
   /** Slack startup check (tests inject a fake); default: the real connector. */
   makeSlack?: SlackCheckFactory;
+  makeWhatsapp?: WhatsappCheckFactory;
   oauth?: SquareOAuth;
   log?: (msg: string) => void;
   /** Opens the setup guide when the merchant asks for it (tests observe the URL); default: the system browser. */
@@ -718,6 +735,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   const makeSquare = deps.makeSquare ?? defaultSquareFactory;
   const makeGlossGenius = deps.makeGlossGenius ?? defaultGlossGeniusFactory;
   const makeSlack = deps.makeSlack ?? defaultSlackFactory;
+  const makeWhatsapp = deps.makeWhatsapp ?? defaultWhatsappFactory;
   const oauth = deps.oauth ?? defaultOAuth;
   const { values: f } = parseArgs({
     args: argv,
@@ -748,6 +766,11 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       "slack-app-token": { type: "string" },
       "slack-channel": { type: "string" },
       "slack-owner-ids": { type: "string" },
+      "whatsapp-token": { type: "string" },
+      "whatsapp-phone-id": { type: "string" },
+      "whatsapp-app-secret": { type: "string" },
+      "whatsapp-verify-token": { type: "string" },
+      "whatsapp-template": { type: "string" },
       "callback-port": { type: "string" },
       port: { type: "string" },
       web: { type: "boolean" },
@@ -866,10 +889,10 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         if (!keyFile || !calendarId) throw new Error("--google-key-file and --calendar-id go together (or pass --no-backend)");
         backend = { kind: "google", keyFile: validKeyFile(dir)(keyFile), calendarId: calendarId.trim() };
       }
-      // The owner channel works with every booking system: Slack (three or none) and/or Twilio (four or none), from flags or env.
+      // The owner channel works with every booking system: Slack (three or none), WhatsApp (four plus the phone, or none) and/or Twilio (four or none), from flags or env.
       const channels = channelFromFlags(f, env);
       if (backend) Object.assign(backend, channels);
-      else if (channels.owner || channels.slack) log("Note: owner channel settings ignored: there is no booking system to report on.");
+      else if (channels.owner || channels.slack || channels.whatsapp) log("Note: owner channel settings ignored: there is no booking system to report on.");
       doWriteTest = !!f["write-test"];
     } else {
       if (!deps.prompter && !f.web && !process.stdin.isTTY) throw new Error("no terminal to prompt on; run it in a terminal, pass --web, or pass --non-interactive (see --help)");
@@ -938,7 +961,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           log("");
         }
         const channelKnown = !!((known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID")) || known("OWNER_PHONE"));
-        const goal = await p.choose("What do you want agents to do?", GOAL_ITEMS, f["slack-bot-token"] || f["owner-phone"] || channelKnown ? GOAL_MESSAGE : GOAL_BOOK, GOAL_DESCRIPTION);
+        const goal = await p.choose("What do you want agents to do?", GOAL_ITEMS, f["slack-bot-token"] || f["whatsapp-token"] || f["owner-phone"] || channelKnown ? GOAL_MESSAGE : GOAL_BOOK, GOAL_DESCRIPTION);
         log("");
         const configured = (yes: boolean) => (yes ? "configured" : "not configured");
         // Same rule as hasSavedBackend: a key given inline (GOOGLE_SERVICE_ACCOUNT_JSON, the Docker/PaaS form) counts.
@@ -1115,7 +1138,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
           backend = { kind: "google", keyFile, calendarId };
         }
-        // Owner channel (none, Slack or Twilio), for any booking system: src/cli/init-channel.ts.
+        // Owner channel (none, Slack, WhatsApp or Twilio), for any booking system: src/cli/init-channel.ts.
         // Asked for the "message me" goal, and always for GlossGenius, whose bookings are otherwise only logged.
         if (backend && (goal === GOAL_MESSAGE || backend.kind === "glossgenius")) {
           Object.assign(backend, await askOwnerChannel(p, { known, flags: f, log, glossgenius: backend.kind === "glossgenius", askValid: askChecked, preferSlack: goal === GOAL_MESSAGE, guide: guideIO }));
@@ -1155,8 +1178,15 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
     keptBackend = !backend && hasSavedBackend(carried);
     if (backend?.slack) {
       log(`Slack owner channel on: agent messages and booking notices go to channel ${backend.slack.channelId}.`);
+      if (backend.whatsapp) log("WhatsApp is set too; the gateway uses Slack and ignores the WHATSAPP_* vars.");
       if (backend.owner) log("Twilio is set too; the gateway uses Slack and ignores the TWILIO_* vars.");
       await checkSlack(backend.slack, makeSlack, log);
+    } else if (backend?.whatsapp) {
+      log(`WhatsApp owner channel on: agent messages and booking notices go to ${maskPhone(backend.whatsapp.phone)}.`);
+      if (backend.owner) log("Twilio is set too; the gateway uses WhatsApp and ignores the TWILIO_* vars.");
+      await checkWhatsapp(backend.whatsapp, makeWhatsapp, log);
+      log("");
+      whatsappWebhookLines(backend.whatsapp, env.PUBLIC_URL ?? savedEnv?.PUBLIC_URL).forEach((l) => log(l));
     } else if (backend?.owner) {
       log(`Owner SMS on: agent bookings, cancels and reschedules are texted to ${maskPhone(backend.owner.phone)} from ${backend.owner.from}.`);
     }
@@ -1198,7 +1228,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         }
         log("Then re-run `npm run init` (or just `npm start`, which checks again).");
       }
-      if (!backend.owner && !backend.slack) log("No owner channel configured: agent bookings are logged, not sent to you (docs/connectors/slack.md, docs/connectors/twilio.md).");
+      if (!backend.owner && !backend.slack && !backend.whatsapp) log("No owner channel configured: agent bookings are logged, not sent to you (docs/connectors/slack.md, docs/connectors/whatsapp.md, docs/connectors/twilio.md).");
     } else {
       const google = backend;
       const json = readFileSync(google.keyFile, "utf8");

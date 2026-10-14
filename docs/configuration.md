@@ -53,14 +53,21 @@ In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (
 | `TWILIO_ACCOUNT_SID` | unset | Owner SMS, any booking system: Twilio Account SID. See [connectors/twilio.md](connectors/twilio.md) |
 | `TWILIO_AUTH_TOKEN` | unset | Owner SMS: Twilio Auth Token |
 | `TWILIO_FROM` | unset | Owner SMS: the Twilio number it is sent from (E.164, e.g. `+12025550199`) |
-| `OWNER_PHONE` | unset | Owner SMS: the merchant's mobile (E.164). Set all four `TWILIO_*`/`OWNER_PHONE` or none; with none, no texts are sent (GlossGenius mode logs the notice instead); a partial set stops startup |
+| `OWNER_PHONE` | unset | Owner SMS or WhatsApp: the merchant's mobile (E.164). With the three `TWILIO_*` vars it is the SMS recipient (all four or none; a partial set stops startup); with the `WHATSAPP_*` vars it is the owner's WhatsApp number. With no texts or WhatsApp set, no messages are sent (GlossGenius mode logs the notice instead) |
 | `SLACK_BOT_TOKEN` | unset | Slack owner channel, any booking system: Bot User OAuth Token (`xoxb-...`). See [connectors/slack.md](connectors/slack.md) |
 | `SLACK_APP_TOKEN` | unset | Slack: app-level token (`xapp-...`) with `connections:write`, for Socket Mode |
 | `SLACK_CHANNEL_ID` | unset | Slack: the channel (`C...`) the app is invited to. Set all three `SLACK_*` above or none; a partial set, or the two tokens swapped, stops startup |
 | `SLACK_OWNER_USER_IDS` | unset | Slack: optional comma list of user ids (`U...`) whose thread replies count as the owner's. Unset means anyone in the channel |
-| `MESSAGES_ENABLED` | `true` | Kill switch for `leave_message`, `get_thread` and `follow_up`. Only matters when an owner channel (Slack or Twilio) is configured; with none, or with only the GlossGenius log fallback, those routes are not offered at all. `false` answers them with `messages_disabled` |
+| `WHATSAPP_ACCESS_TOKEN` | unset | WhatsApp owner channel, any booking system: Meta Cloud API access token (System User token for production, the 24-hour test token to try it). See [connectors/whatsapp.md](connectors/whatsapp.md) |
+| `WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp: the sending number's Phone number ID (digits, from the Meta app's WhatsApp → API Setup), not the phone number |
+| `WHATSAPP_APP_SECRET` | unset | WhatsApp: the Meta app's App Secret, which signs every webhook delivery (`X-Hub-Signature-256`) |
+| `WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp: the token Meta echoes when it verifies the webhook URL; `npm run init` generates one. Set all four `WHATSAPP_*` above plus `OWNER_PHONE`, or none; a partial set stops startup |
+| `WHATSAPP_TEMPLATE` | unset | WhatsApp: optional approved utility template, `name` or `name:lang` (default `en_US`), with one `{{1}}` body parameter, sent when the owner has not written to the number in 24 hours |
+| `MESSAGES_ENABLED` | `true` | Kill switch for `leave_message`, `get_thread` and `follow_up`. Only matters when an owner channel (Slack, WhatsApp or Twilio) is configured; with none, or with only the GlossGenius log fallback, those routes are not offered at all. `false` answers them with `messages_disabled` |
 
-The Slack owner channel (the first three `SLACK_*` vars) works with every booking system and wins over Twilio when both are set, because only Slack carries the owner's replies back to agents ([connectors/slack.md](connectors/slack.md)).
+The Slack owner channel (the first three `SLACK_*` vars) works with every booking system and wins over WhatsApp and Twilio when more than one is set ([connectors/slack.md](connectors/slack.md)).
+
+The WhatsApp owner channel (the four `WHATSAPP_*` vars plus `OWNER_PHONE`) works with every booking system, carries the owner's replies back to agents like Slack, and wins over Twilio. It needs a public HTTPS URL: Meta calls `POST /webhooks/whatsapp` on it, which is mounted outside `/api` and verified with `WHATSAPP_APP_SECRET` ([connectors/whatsapp.md](connectors/whatsapp.md)).
 
 The owner SMS (the four `TWILIO_*`/`OWNER_PHONE` vars) works with every booking system: with it set, the merchant gets one text per agent booking, cancel and reschedule ([connectors/twilio.md](connectors/twilio.md)).
 

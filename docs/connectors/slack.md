@@ -20,7 +20,7 @@ When both Slack and Twilio are configured, Slack wins (only it can carry replies
 
 - A Slack workspace where the merchant (or whoever runs the gateway) may **create and install apps**.
 - A channel for agent messages. A **private channel** with only the owner and the app is the safest choice (see *Limitations*).
-- The host needs outbound HTTPS and WSS to `slack.com` and `*.slack.com` ([deploy.md](../deploy.md#1g-slack-owner-channel-any-booking-system)).
+- The host needs outbound HTTPS and WSS to `slack.com` and `*.slack.com` ([deploy.md](../deploy.md#1h-slack-owner-channel-any-booking-system)).
 - Node >= 22.4 (built-in `WebSocket`); the gateway already requires 22.13.
 
 ## Setup

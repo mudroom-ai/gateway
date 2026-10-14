@@ -5,6 +5,7 @@ import { parseEnv } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { EXISTING_ITEMS, GOAL_ITEMS, GOOGLE_SETUP_STEPS, INTRO, READY_ITEMS, buildEnvFile, guideUrl, parseHours, renderHours, runInit, validGlossGeniusUrl } from "../src/cli/init.js";
+import { validWhatsappPhone, validWhatsappPhoneId } from "../src/cli/init-channel.js";
 import { FakeCalendarConnector } from "./helpers/fake-calendar.js";
 import { ScriptedPrompter } from "./helpers/scripted-prompter.js";
 
@@ -141,6 +142,90 @@ describe("init wizard: owner SMS (Twilio) with any booking system", () => {
     expect(code).toBe(1);
     expect(logs.join("\n")).toMatch(/TWILIO_AUTH_TOKEN, TWILIO_FROM, OWNER_PHONE/);
     expect(existsSync(join(dir, ".env"))).toBe(false);
+  });
+});
+
+describe("init wizard: WhatsApp owner channel", () => {
+  const WA_FLAGS = ["--owner-phone", "+12025550199", "--whatsapp-token", "EAAx", "--whatsapp-phone-id", "123456789012345", "--whatsapp-app-secret", "sec"];
+
+  it("--help names whatsapp", async () => {
+    const logs: string[] = [];
+    expect(await runInit(["--help"], { log: (m) => logs.push(m) })).toBe(0);
+    expect(logs.join("\n")).toMatch(/--whatsapp-token.*\(whatsapp\)/);
+  });
+
+  it("Square + WhatsApp flags write the keys with a generated verify token, run the check, and print the webhook URL", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-wa-"));
+    const logs: string[] = [];
+    const code = await runInit(["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", ...WA_FLAGS, "--whatsapp-template", "agent_message:es"], {
+      env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1", PUBLIC_URL: "https://gw.example.com/" },
+      makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+      makeWhatsapp: () => ({ checkAccess: async () => Promise.reject(new Error("WhatsApp 190: WHATSAPP_ACCESS_TOKEN is invalid or expired")) }),
+      log: (m) => logs.push(m),
+    });
+    expect(code).toBe(0);
+    const env = parseEnv(readFileSync(join(dir, ".env"), "utf8"));
+    expect(env).toMatchObject({ OWNER_PHONE: "+12025550199", WHATSAPP_ACCESS_TOKEN: "EAAx", WHATSAPP_PHONE_NUMBER_ID: "123456789012345", WHATSAPP_APP_SECRET: "sec", WHATSAPP_TEMPLATE: "agent_message:es" });
+    expect(env.WHATSAPP_VERIFY_TOKEN).toMatch(/^[0-9a-f]{32}$/);
+    expect(env.TWILIO_ACCOUNT_SID).toBeUndefined();
+    const out = logs.join("\n");
+    expect(out).toContain("WhatsApp check FAILED: WhatsApp 190");
+    expect(out).toContain("Callback URL:  https://gw.example.com/webhooks/whatsapp");
+    expect(out).toContain(`Verify token:  ${env.WHATSAPP_VERIFY_TOKEN}`);
+  });
+
+  it("a partial WhatsApp set exits 1 naming the missing vars and writes nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-wa2-"));
+    const logs: string[] = [];
+    const code = await runInit(["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", "--whatsapp-token", "EAAx"], {
+      env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1" },
+      makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+      log: (m) => logs.push(m),
+    });
+    expect(code).toBe(1);
+    expect(logs.join("\n")).toMatch(/WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET, OWNER_PHONE/);
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+  });
+
+  it("a resume keeps a WhatsApp channel already in .env, verify token included", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-wa3-"));
+    const logs: string[] = [];
+    const first = await runInit(["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", ...WA_FLAGS], {
+      env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1" },
+      makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+      makeWhatsapp: () => ({ checkAccess: async () => {} }),
+      log: () => {},
+    });
+    expect(first).toBe(0);
+    const before = parseEnv(readFileSync(join(dir, ".env"), "utf8"));
+    const again = await runInit(["--non-interactive", "--force", "--dir", dir, "--name", "Foyer", "--square"], {
+      env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1", ...before },
+      makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+      makeWhatsapp: () => ({ checkAccess: async () => {} }),
+      log: (m) => logs.push(m),
+    });
+    expect(again).toBe(0);
+    expect(parseEnv(readFileSync(join(dir, ".env"), "utf8")).WHATSAPP_VERIFY_TOKEN).toBe(before.WHATSAPP_VERIFY_TOKEN);
+  });
+
+  it("writes OWNER_PHONE only once when both WhatsApp and Twilio are configured, and validates phone + phone-id inputs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-wa4-"));
+    const code = await runInit(
+      ["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", ...WA_FLAGS, "--twilio-sid", "AC123", "--twilio-token", "tok", "--twilio-from", "+12025550100"],
+      {
+        env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1" },
+        makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+        makeWhatsapp: () => ({ checkAccess: async () => {} }),
+        log: () => {},
+      },
+    );
+    expect(code).toBe(0);
+    const raw = readFileSync(join(dir, ".env"), "utf8");
+    expect(raw.match(/^OWNER_PHONE=/gm)).toHaveLength(1);
+    expect(validWhatsappPhone("+1 202 555 0199")).toBe("+1 202 555 0199");
+    expect(() => validWhatsappPhone("not-a-phone")).toThrow(/OWNER_PHONE/);
+    expect(validWhatsappPhoneId("123456789012345")).toBe("123456789012345");
+    expect(() => validWhatsappPhoneId("+1 202 555 0199")).toThrow(/Phone number ID/);
   });
 });
 
@@ -298,11 +383,11 @@ describe("init wizard: GlossGenius", () => {
     const dir = mkdtempSync(join(tmpdir(), "gw-init-gg4-"));
     const logs: string[] = [];
     const partial = await runInit(
-      ["--non-interactive", "--dir", dir, "--name", "Luna", "--glossgenius-url", "https://luna.glossgenius.com", "--google-key-file", ggKey(dir), "--calendar-id", "c", "--owner-phone", "+12025550199"],
+      ["--non-interactive", "--dir", dir, "--name", "Luna", "--glossgenius-url", "https://luna.glossgenius.com", "--google-key-file", ggKey(dir), "--calendar-id", "c", "--owner-phone", "+12025550199", "--twilio-sid", "AC1"],
       { env: {}, makeGlossGenius: () => okGlossGenius(), log: (m) => logs.push(m) },
     );
     expect(partial).toBe(1);
-    expect(logs.join("\n")).toContain("TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM");
+    expect(logs.join("\n")).toContain("TWILIO_AUTH_TOKEN, TWILIO_FROM");
   });
 
   it("interactive: the GlossGenius choice asks for the URL, the Google pair and (optionally) Twilio", async () => {

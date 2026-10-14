@@ -4,7 +4,7 @@ A connector is the gateway's adapter to one outside system. There are three modu
 
 - **Store** (`BookingConnector`): a booking platform that returns ready-made slots, sets prices, and books, cancels and reschedules itself (Square, GlossGenius).
 - **Calendar** (`CalendarConnector`): a plain calendar that only knows busy intervals and events. The gateway's own slot engine and rules build slots and prices on top (`calendar.ts` adapts it to a BookingConnector) (Google).
-- **Communication** (`CommunicationConnector`): how the merchant hears from the gateway. It is not a booking system: it sits beside whichever one is configured. Every channel gets one short notice per agent booking, cancel and reschedule; those failures are logged, never thrown, so a channel can never change a booking's outcome. A thread-capable channel (Slack) also carries agent messages and the owner's typed replies; its thread methods throw `channel_*` codes so the core can queue or refuse.
+- **Communication** (`CommunicationConnector`): how the merchant hears from the gateway. It is not a booking system: it sits beside whichever one is configured. Every channel gets one short notice per agent booking, cancel and reschedule; those failures are logged, never thrown, so a channel can never change a booking's outcome. A thread-capable channel (Slack, WhatsApp) also carries agent messages and the owner's typed replies; its thread methods throw `channel_*` codes so the core can queue or refuse. A channel with no threads (WhatsApp) sets `flat` and the owner quotes the message instead; one that needs the provider to call it (WhatsApp's webhook) exposes `webhook` and the server mounts it outside `/api`.
 
 The checklist below applies to all three modules; for a Communication connector, the booking items (idempotency, `slot_unavailable`, cancel/reschedule) are covered by the core booking tests rather than the connector's own, and its tests instead cover every `channel_*` code and, for a thread-capable channel, the inbound path (ack only after the reply is stored, ignored message kinds, reconnect).
 
@@ -17,6 +17,7 @@ The checklist below applies to all three modules; for a Communication connector,
 | `glossgenius` | Store (`BookingConnector`, shadow mode) | `src/connectors/glossgenius.ts` | [glossgenius.md](glossgenius.md) | `test/glossgenius.test.ts` | Experimental |
 | `twilio` | Communication (`CommunicationConnector`, notify only) | `src/connectors/twilio.ts` (messages in `src/notify/owner.ts`) | [twilio.md](twilio.md) | `test/twilio.test.ts`, `test/owner.test.ts` | Experimental |
 | `slack` | Communication (`CommunicationConnector`, notify + two-way thread) | `src/connectors/slack.ts` (+ `slack-socket.ts`) | [slack.md](slack.md) | `test/slack.test.ts` | Experimental |
+| `whatsapp` | Communication (`CommunicationConnector`, notify + two-way, flat) | `src/connectors/whatsapp.ts` | [whatsapp.md](whatsapp.md) | `test/whatsapp.test.ts` | Experimental |
 
 The README's *Connectors* table links each doc; this file is the full registry.
 

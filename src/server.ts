@@ -21,6 +21,7 @@ import { createGoogleConnector } from "./connectors/google.js";
 import { createSquareConnector } from "./connectors/square.js";
 import { createSlackChannel } from "./connectors/slack.js";
 import { createTwilioChannel } from "./connectors/twilio.js";
+import { createWhatsappChannel } from "./connectors/whatsapp.js";
 import { ConnectorError, isBookingConnector, type BookingConnector, type CalendarConnector, type CommunicationConnector } from "./connectors/types.js";
 import { quote, rulesPricer } from "./quote.js";
 import { logOwnerChannel } from "./notify/owner.js";
@@ -74,22 +75,39 @@ export function buildOps(
 
 export { createSlackChannel };
 
+/** Express glue for a channel's inbound webhook: raw body in, status and text out. Nothing else of the request reaches the channel. */
+export function webhookHandler(hook: NonNullable<CommunicationConnector["webhook"]>): express.RequestHandler {
+  return async (req, res) => {
+    const query: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.query)) if (typeof v === "string") query[k] = v;
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers[k.toLowerCase()] = v;
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    try {
+      const out = await hook.handle({ method: req.method, query, headers, rawBody });
+      res.status(out.status).type("text/plain").send(out.body ?? "");
+    } catch (e) {
+      console.warn(`[gateway] webhook ${hook.path} failed: ${(e as Error)?.message ?? e}`);
+      res.status(500).type("text/plain").send("error");
+    }
+  };
+}
+
 /**
  * How the merchant hears from the gateway: Slack (notices plus two-way threads)
- * when configured, else Twilio SMS (notices only), else a log line for
- * shadow-mode connectors (which need the merchant to act), else nothing.
- * Slack wins when both are set because only it can carry owner replies.
- * Throws when Slack or Twilio is only partly configured, so a typo never
- * silently falls back to the other channel.
+ * when configured, else WhatsApp (the same, over Meta's webhook), else Twilio SMS
+ * (notices only), else a log line for shadow-mode connectors (which need the
+ * merchant to act), else nothing. The two-way channels win over Twilio because
+ * only they carry owner replies. Throws when a channel is only partly
+ * configured, so a typo never silently falls back to another channel.
  */
 export function createOwnerChannel(settings: RuntimeSettings, connector: BookingConnector, warn: (m: string) => void = (m) => console.warn(m)): CommunicationConnector | undefined {
   const slack = createSlackChannel(settings);
+  const whatsapp = createWhatsappChannel(settings);
   const twilio = createTwilioChannel(settings);
-  if (slack) {
-    if (twilio) warn("[gateway] both Slack and Twilio are configured; using Slack for owner messages (unset the TWILIO_* vars to silence this)");
-    return slack;
-  }
-  return twilio ?? (connector.ownerNotes ? logOwnerChannel() : undefined);
+  const names = [slack && "Slack", whatsapp && "WhatsApp", twilio && "Twilio"].filter(Boolean) as string[];
+  if (names.length > 1) warn(`[gateway] ${names.join(", ")} are all configured; using ${names[0]} for owner messages (unset the other channels' vars to silence this)`);
+  return slack ?? whatsapp ?? twilio ?? (connector.ownerNotes ? logOwnerChannel() : undefined);
 }
 
 /**
@@ -185,15 +203,18 @@ export function createApp(
   const connector = toBookingConnector(config, deps.connector ?? createConnector(config, settings));
   const store = deps.store ?? openStore(settings.db_path);
   const app = express();
-  app.use(hostValidation(settings.host, settings.allowed_hosts, sendError));
-  app.use(express.json());
-
   // Throws at startup on an invalid TRUST_PROXY address/CIDR.
   app.set("trust proxy", settings.trust_proxy);
+  const ipOpts = { trustCfHeader: settings.trust_cf_connecting_ip && Array.isArray(settings.trust_proxy), debug: settings.trust_proxy_debug };
+  app.use(hostValidation(settings.host, settings.allowed_hosts, sendError));
+  // A provider webhook (WhatsApp) verifies a signature over the raw bytes, so it is mounted before the JSON parser.
+  const owner = deps.owner === undefined ? createOwnerChannel(settings, connector) : (deps.owner ?? undefined);
+  if (owner?.webhook) app.all(owner.webhook.path, requestRateLimit(config.limits, sendError, ipOpts), express.raw({ type: () => true, limit: "256kb" }), webhookHandler(owner.webhook));
+  app.use(express.json());
 
   app.use(accessLog());
 
-  const ops = buildOps(config, settings, connector, store, deps.owner);
+  const ops = buildOps(config, settings, connector, store, owner ?? null);
   const messages = ops.messages;
   // main() starts and stops the channel and outbox through this (start after listen, stop on SIGTERM).
   app.locals.messages = messages;
@@ -209,7 +230,6 @@ export function createApp(
   });
 
   ops.book = withContactLimits(ops.book, { limits: config.limits, ...sqliteContactLookups(store.db, config.merchant_id) });
-  const ipOpts = { trustCfHeader: settings.trust_cf_connecting_ip && Array.isArray(settings.trust_proxy), debug: settings.trust_proxy_debug };
   const guard = [authMiddleware(settings.api_keys, sendError), requestRateLimit(config.limits, sendError, ipOpts)];
 
   // Rate-limited like the API: an agent may fetch this on every task.
