@@ -68,8 +68,9 @@ describe("twilioOwnerChannel", () => {
 });
 
 describe("createTwilioChannel", () => {
-  it("returns undefined when nothing is set", () => {
+  it("returns undefined when nothing is set, or only OWNER_PHONE (shared with WhatsApp)", () => {
     expect(createTwilioChannel({})).toBeUndefined();
+    expect(createTwilioChannel({ owner_phone: PHONE })).toBeUndefined();
   });
 
   it("throws naming the missing vars when partly set", () => {

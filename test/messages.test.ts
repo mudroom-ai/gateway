@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { ConnectorError, type ChannelContext, type CommunicationConnector, type OwnerMessageHandler, type PostedQuery, type ThreadOpener } from "../src/connectors/types.js";
 import { runOp } from "../src/adapters/http.js";
-import { CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
+import { CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, SEVERAL_WAITING_HINT_FLAT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
 import { logOwnerChannel } from "../src/notify/owner.js";
 import { Store } from "../src/store/sqlite.js";
 import type { Booking, Service } from "../src/types.js";
@@ -503,6 +503,24 @@ describe("owner side", () => {
     await flush();
     expect(channel.posts).toHaveLength(1);
     expect(channel.notices).toEqual([]);
+  });
+
+  it("a flat channel (WhatsApp): the opener says to quote the message, a top-level reply is not mirrored, and the hint says to swipe", async () => {
+    const channel = Object.assign(new FakeChannel(), { flat: true as const });
+    const { ops } = setup({ channel });
+    const r = await leaveOk(ops);
+    expect(channel.opened[0]!.text).toContain("swipe to reply");
+    expect(channel.opened[0]!.text).not.toContain("in this thread");
+    expect(await ops.onOwnerMessage({ provider_msg_id: "wamid.1", user_id: "12025550199", text: "Yes, cats welcome." })).toBe("accepted");
+    expect(channel.acks).toEqual(["wamid.1"]);
+    await flush();
+    expect(channel.posts).toEqual([]);
+    const g = await ops.getThread({ thread_id: r.thread_id, read_token: r.read_token });
+    expect(g.ok && g.data.messages.at(-1)).toMatchObject({ from: "owner", text: "Yes, cats welcome." });
+    await leaveOk(ops, { customer: { name: "Bo", email: "bo@example.com" } });
+    await leaveOk(ops, { customer: { name: "Cy", email: "cy@example.com" } });
+    expect(await ops.onOwnerMessage({ provider_msg_id: "wamid.2", user_id: "12025550199", text: "Which one?" })).toBe("ignored");
+    expect(channel.notices).toEqual([SEVERAL_WAITING_HINT_FLAT]);
   });
 
   it("a top-level message fetched after a gap is the reply only if no thread changed since it was typed", async () => {

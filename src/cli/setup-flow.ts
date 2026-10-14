@@ -8,7 +8,7 @@ import {
   siteBookingUrl, squareAuthorize, validCurrency, validGlossGeniusUrl, validHoursSpec, validKeyFile, validSquareEnv, validZone,
   type Answers, type Backend, type ServiceAnswer, type SquareOAuth,
 } from "./init.js";
-import { CHANNEL_GUIDES, channelFromFlags, ownerSms, slackAnswer, type ChannelFlags } from "./init-channel.js";
+import { CHANNEL_GUIDES, channelFromFlags, ownerSms, slackAnswer, whatsappAnswer, type ChannelFlags } from "./init-channel.js";
 import { READY_ITEMS, type SetupGuide } from "./guide.js";
 import { WEBSITE_NOTES, type WebsiteDeps } from "./init-website.js";
 import { buildProfile, detectLlm, extractWithLlm, keyCandidate, type LlmCandidate, type SiteProfile } from "./profile.js";
@@ -90,7 +90,7 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
       const remove = (prefixes: string[]) => { for (const name of values.keys()) if (prefixes.some((prefix) => name.startsWith(prefix))) values.delete(name); };
       if (key === "system") remove(["ready", "channel", "google-key", "calendar", "booking-url", "square-", "service-", "hours"]);
       if (key === "goal") remove(["channel"]);
-      if (key === "channel") remove(["channel-ready", "slack-", "twilio-", "owner-phone"]);
+      if (key === "channel") remove(["channel-ready", "slack-", "twilio-", "whatsapp-", "owner-phone"]);
       if (key === "provider") remove(["key-kind", "model-key", "profile-key"]);
       if (key === "key-kind") remove(["model-key", "profile-key"]);
       if (key === "website" || key === "existing") remove(["provider", "key-kind", "model-key", "profile-key", "service-", "hours"]);
@@ -195,8 +195,8 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
       }
     }
     const channelKnown = !!((known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID")) || known("OWNER_PHONE"));
-    const goalDefault = flag("slack-bot-token") || flag("owner-phone") || channelKnown ? 1 : 0;
-    choose("goal", "What do you want agents to do?", GOAL_ITEMS, goalDefault, ["Book appointments: find times, quote, book, cancel and reschedule", "...and message me: add Slack conversations or SMS booking notices"]);
+    const goalDefault = flag("slack-bot-token") || flag("whatsapp-token") || flag("owner-phone") || channelKnown ? 1 : 0;
+    choose("goal", "What do you want agents to do?", GOAL_ITEMS, goalDefault, ["Book appointments: find times, quote, book, cancel and reschedule", "...and message me: add Slack or WhatsApp conversations, or SMS booking notices"]);
     const configured = [
       !!((known("GOOGLE_SERVICE_ACCOUNT_FILE") || known("GOOGLE_SERVICE_ACCOUNT_JSON")) && known("GOOGLE_CALENDAR_ID")),
       !!(known("SQUARE_ACCESS_TOKEN") && known("SQUARE_LOCATION_ID")), !!(known("GLOSSGENIUS_BOOKING_URL") && (known("GOOGLE_SERVICE_ACCOUNT_FILE") || known("GOOGLE_SERVICE_ACCOUNT_JSON")) && known("GOOGLE_CALENDAR_ID")),
@@ -273,12 +273,15 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
       }
       if (number("goal", goalDefault) === 1 || system === 2) {
         const slackKnown = !!(known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID"));
-        const channelDefault = flag("slack-bot-token") || slackKnown ? 1 : flag("owner-phone") || known("OWNER_PHONE") ? 2 : number("goal", goalDefault) === 1 ? 1 : 0;
-        choose("channel", "Owner channel", [{ label: "None" }, { label: "Slack" }, { label: "Twilio SMS" }], channelDefault, ["None: log messages and booking notices", "Slack: reply to agent messages in a channel", "Twilio SMS: get booking notices by text"]);
+        const whatsappKnown = !!(known("WHATSAPP_ACCESS_TOKEN") && known("WHATSAPP_PHONE_NUMBER_ID") && known("WHATSAPP_APP_SECRET") && known("OWNER_PHONE"));
+        const twilioKnown = !!(known("OWNER_PHONE") && known("TWILIO_ACCOUNT_SID"));
+        const channelDefault = flag("slack-bot-token") || slackKnown ? 1 : flag("whatsapp-token") || whatsappKnown ? 3 : flag("owner-phone") || twilioKnown ? 2 : number("goal", goalDefault) === 1 ? 1 : 0;
+        choose("channel", "Owner channel", [{ label: "None" }, { label: "Slack" }, { label: "Twilio SMS" }, { label: "WhatsApp" }], channelDefault, ["None: log messages and booking notices", "Slack: reply to agent messages in a channel", "Twilio SMS: get booking notices by text", "WhatsApp: reply to agent messages on your phone"]);
         const channel = number("channel", channelDefault);
         let channelLater = false;
         if (channel === 1 && !slackKnown) channelLater = ready("channel-ready", CHANNEL_GUIDES.slack);
-        if (channel === 2 && !known("OWNER_PHONE")) channelLater = ready("channel-ready", CHANNEL_GUIDES.twilio);
+        if (channel === 2 && !twilioKnown) channelLater = ready("channel-ready", CHANNEL_GUIDES.twilio);
+        if (channel === 3 && !whatsappKnown) channelLater = ready("channel-ready", CHANNEL_GUIDES.whatsapp);
         if (!channelLater && channel === 1) {
           ask("slack-bot", "Bot User OAuth Token (xoxb-...)", flag("slack-bot-token") ?? known("SLACK_BOT_TOKEN"), prefix("Bot token", "xoxb-"), [{ text: "Bot token from your installed Slack app. Starts with `xoxb-`." }], true);
           ask("slack-app", "App-level token (xapp-...)", flag("slack-app-token") ?? known("SLACK_APP_TOKEN"), prefix("App token", "xapp-"), [{ text: "App-level token with `connections:write`. Starts with `xapp-`." }], true);
@@ -291,6 +294,13 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
           ask("twilio-token", "Twilio Auth Token", flag("twilio-token") ?? known("TWILIO_AUTH_TOKEN"), requireLine("Auth Token"), [], true);
           ask("twilio-from", "Twilio phone number to send from", flag("twilio-from") ?? known("TWILIO_FROM"), requireLine("Twilio number"));
           if (backend && values.has("twilio-from")) backend.owner = ownerSms({ phone: text("owner-phone"), sid: text("twilio-sid"), token: text("twilio-token"), from: text("twilio-from") });
+        } else if (!channelLater && channel === 3) {
+          ask("owner-phone", "Your WhatsApp number (e.g. +1 202 555 0199)", flag("owner-phone") ?? known("OWNER_PHONE"), requireLine("Phone"));
+          ask("whatsapp-phone-id", "Phone number ID", flag("whatsapp-phone-id") ?? known("WHATSAPP_PHONE_NUMBER_ID"), requireLine("Phone number ID"), [{ text: "WhatsApp → API Setup. A number, not the phone number itself." }]);
+          ask("whatsapp-token", "Access token", flag("whatsapp-token") ?? known("WHATSAPP_ACCESS_TOKEN"), requireLine("Access token"), [{ text: "From WhatsApp → API Setup (24-hour test token) or a System User token (permanent)." }], true);
+          ask("whatsapp-app-secret", "App Secret", flag("whatsapp-app-secret") ?? known("WHATSAPP_APP_SECRET"), requireLine("App Secret"), [{ text: "App settings → Basic → App Secret. It signs each webhook delivery." }], true);
+          ask("whatsapp-template", "Approved template for messages outside the 24-hour window, name or name:lang (Enter = none)", flag("whatsapp-template") ?? known("WHATSAPP_TEMPLATE"), (s) => s, [{ text: "Optional. Leave blank for the test number: just message it from your phone first." }]);
+          if (backend && values.has("whatsapp-template")) backend.whatsapp = whatsappAnswer({ phone: text("owner-phone"), phoneId: text("whatsapp-phone-id"), token: text("whatsapp-token"), secret: text("whatsapp-app-secret"), verify: flag("whatsapp-verify-token") ?? known("WHATSAPP_VERIFY_TOKEN"), template: text("whatsapp-template") });
         }
       } else if (backend) {
         try { Object.assign(backend, channelFromFlags(f, { ...savedEnv, ...ctx.env })); } catch { /* Invalid saved channel settings are checked after saving. */ }

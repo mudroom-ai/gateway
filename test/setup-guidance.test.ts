@@ -35,7 +35,7 @@ function renderer() {
 
 describe("wizard guidance", () => {
   it("uses the same concise checklist and labeled guide link for every connector", () => {
-    const guides = [SETUP_GUIDES.google(8765), SETUP_GUIDES.square(8765), SETUP_GUIDES.glossgenius(8765), CHANNEL_GUIDES.slack!, CHANNEL_GUIDES.twilio!];
+    const guides = [SETUP_GUIDES.google(8765), SETUP_GUIDES.square(8765), SETUP_GUIDES.glossgenius(8765), CHANNEL_GUIDES.slack!, CHANNEL_GUIDES.twilio!, CHANNEL_GUIDES.whatsapp!];
     for (const guide of guides) {
       const note = connectionNotes(guide, 8765)[0];
       expect(typeof note).toBe("object");

@@ -302,6 +302,34 @@ describe("messages over HTTP", () => {
     expect(h).toEqual({ ok: true, channel: { mode: "two_way", enabled: true, connected: true }, outbox: { queued: 0, failed: 0 } });
   });
 
+  it("a channel webhook is mounted outside /api with the raw body, before the JSON parser and without an API key", async () => {
+    const seen: { method: string; raw: string; sig: string; q: Record<string, string> }[] = [];
+    const hooked: CommunicationConnector = {
+      ...channel,
+      webhook: { path: "/webhooks/test", handle: async (r) => (seen.push({ method: r.method, raw: r.rawBody.toString(), sig: r.headers["x-hub-signature-256"] ?? "", q: r.query }), { status: r.method === "GET" ? 200 : 202, body: r.method === "GET" ? r.query["hub.challenge"] : "ok" }) },
+    };
+    const path = join(mkdtempSync(join(tmpdir(), "gw-hook-")), "t.sqlite");
+    const app = createApp(config, loadEnv({ DB_PATH: path, API_KEYS: "secret" }, config), { connector: new FakeCalendarConnector(), store: new Store(path), owner: hooked });
+    const srv = app.listen(0, "127.0.0.1");
+    await new Promise((r) => srv.once("listening", r));
+    const hb = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    try {
+      const get = await fetch(`${hb}/webhooks/test?hub.mode=subscribe&hub.challenge=4242`);
+      expect([get.status, await get.text()]).toEqual([200, "4242"]);
+      // Not valid JSON on purpose: the parser must not touch it, and no Authorization header is needed.
+      const post = await fetch(`${hb}/webhooks/test`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": "sha256=abc" }, body: "{raw" });
+      expect([post.status, await post.text()]).toEqual([202, "ok"]);
+      expect(seen).toEqual([
+        { method: "GET", raw: "", sig: "", q: { "hub.mode": "subscribe", "hub.challenge": "4242" } },
+        { method: "POST", raw: "{raw", sig: "sha256=abc", q: {} },
+      ]);
+      // The API behind it still checks keys.
+      expect(((await (await fetch(`${hb}/api/services`, { headers: { authorization: "Bearer wrong" } })).json()) as Record<string, unknown>).code).toBe("unauthorized");
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  });
+
   it("without an owner channel the routes do not exist", async () => {
     expect((await call("POST", "/api/messages", MSG, KEY)).body).toMatchObject({ code: "invalid_request", message: "Unknown endpoint" });
     expect(await (await fetch(`${base}/healthz`)).json()).toEqual({ ok: true });

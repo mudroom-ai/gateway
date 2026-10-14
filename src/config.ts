@@ -193,6 +193,13 @@ export const EnvSchema = z.object({
   SLACK_CHANNEL_ID: z.string().optional(),
   /** Comma-separated Slack user ids whose thread replies count as the owner's; unset = anyone in the channel. */
   SLACK_OWNER_USER_IDS: z.string().optional(),
+  /** WhatsApp owner channel (src/connectors/whatsapp.ts): notices plus two-way replies over Meta's Cloud API webhook. The four plus OWNER_PHONE, or none. */
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_APP_SECRET: z.string().optional(),
+  WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  /** Optional approved template `name` or `name:lang` for messages outside the 24-hour window. */
+  WHATSAPP_TEMPLATE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -227,6 +234,11 @@ export interface RuntimeSettings {
   slack_app_token: string | undefined;
   slack_channel_id: string | undefined;
   slack_owner_user_ids: string[];
+  whatsapp_access_token: string | undefined;
+  whatsapp_phone_number_id: string | undefined;
+  whatsapp_app_secret: string | undefined;
+  whatsapp_verify_token: string | undefined;
+  whatsapp_template: string | undefined;
 }
 
 const csv = (s: string | undefined) =>
@@ -329,5 +341,10 @@ export function loadEnv(env: NodeJS.ProcessEnv, config?: Config): RuntimeSetting
     slack_app_token: e.SLACK_APP_TOKEN?.trim() || undefined,
     slack_channel_id: e.SLACK_CHANNEL_ID?.trim() || undefined,
     slack_owner_user_ids: csv(e.SLACK_OWNER_USER_IDS),
+    whatsapp_access_token: e.WHATSAPP_ACCESS_TOKEN?.trim() || undefined,
+    whatsapp_phone_number_id: e.WHATSAPP_PHONE_NUMBER_ID?.trim() || undefined,
+    whatsapp_app_secret: e.WHATSAPP_APP_SECRET?.trim() || undefined,
+    whatsapp_verify_token: e.WHATSAPP_VERIFY_TOKEN?.trim() || undefined,
+    whatsapp_template: e.WHATSAPP_TEMPLATE?.trim() || undefined,
   };
 }

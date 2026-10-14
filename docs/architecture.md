@@ -45,7 +45,7 @@ Shadow-mode connectors such as GlossGenius read platform data but write bookings
 
 | Channel capability | Message flow |
 | --- | --- |
-| Two-way (Slack) | Creates a channel thread. Replies reach the core through its registered `onOwnerMessage` handler. |
+| Two-way (Slack, WhatsApp) | Creates a channel thread (WhatsApp: one message the owner quotes). Replies reach the core through its registered `onOwnerMessage` handler; WhatsApp's arrive on a webhook the server mounts outside `/api`. |
 | Notify-only (Twilio) | Sends through `notify`; the owner contacts the customer directly. |
 | No channel | Messaging routes are absent. |
 

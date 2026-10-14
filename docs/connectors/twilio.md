@@ -62,7 +62,7 @@ It cannot:
 - **Cost.** Each text is a billable Twilio SMS on the merchant's or self-hoster's account.
 - **Carrier filtering.** US carriers filter application-to-person SMS from unregistered numbers. A US long-code number needs **A2P 10DLC** registration in the Twilio Console (**Messaging → Regulatory Compliance**), or texts may be delayed or dropped. Other countries have their own sender rules.
 - **One recipient.** `OWNER_PHONE` is a single number.
-- **Slack wins.** When the `SLACK_*` vars are also set, the gateway uses Slack ([slack.md](slack.md)) for owner messages, ignores these four and logs a warning at startup.
+- **Slack and WhatsApp win.** When the `SLACK_*` or `WHATSAPP_*` vars are also set, the gateway uses that channel ([slack.md](slack.md), [whatsapp.md](whatsapp.md)) for owner messages, ignores the three `TWILIO_*` vars and logs a warning at startup. `OWNER_PHONE` alone, without the `TWILIO_*` vars, is not a partial Twilio set: WhatsApp reads it too.
 - **Delivery failures are only logged.** If Twilio rejects or times out (10 seconds), the gateway writes a warning to its log and does not retry.
 - **Never blocks a booking.** A failed text never fails, delays past the timeout, or undoes a book, cancel or reschedule.
 - Messages are cut at 1500 characters.

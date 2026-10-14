@@ -81,8 +81,9 @@ export interface TwilioSettings {
 }
 
 /**
- * Twilio channel when all four settings are set, undefined when none are,
- * and an Error naming the missing env vars when only some are.
+ * Twilio channel when all four settings are set, undefined when no TWILIO_* one is
+ * (OWNER_PHONE alone is shared with the WhatsApp channel), and an Error naming the
+ * missing env vars when only some are.
  */
 export function createTwilioChannel(
   settings: TwilioSettings,
@@ -95,7 +96,7 @@ export function createTwilioChannel(
     ["owner_phone", "OWNER_PHONE"],
   ];
   const missing = fields.filter(([k]) => !settings[k]).map(([, env]) => env);
-  if (missing.length === fields.length) return undefined;
+  if (!settings.twilio_account_sid && !settings.twilio_auth_token && !settings.twilio_from) return undefined;
   if (missing.length > 0) {
     throw new Error(`Owner SMS is partly configured: set ${missing.join(", ")} too, or unset all of TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, OWNER_PHONE to log owner notices instead`);
   }

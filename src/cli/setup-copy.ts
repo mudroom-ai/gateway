@@ -26,6 +26,11 @@ export function connectionNotes(guide: SetupGuide, port: number): SetupNote[] {
       { label: "Copy both app tokens", detail: "App-level: `xapp-…` (`connections:write`). Bot: `xoxb-…` after installation." },
       { label: "Invite the app to your channel", detail: "Use `/invite`, then copy the Channel ID (`C…`)." },
     ],
+    whatsapp: [
+      { label: "Create a Meta app with the WhatsApp product", detail: "WhatsApp → API Setup: add your own number under “To”, then copy the Phone number ID and the access token." },
+      { label: "Copy the App Secret", detail: "App settings → Basic." },
+      { label: "Have a public HTTPS URL for the gateway", detail: "Meta calls it at `/webhooks/whatsapp`; the summary prints the URL and verify token to paste into WhatsApp → Configuration → Webhook." },
+    ],
     twilio: [
       { label: "Copy your Account SID and Auth Token" },
       { label: "Choose an SMS-capable sender number" },
@@ -36,5 +41,6 @@ export function connectionNotes(guide: SetupGuide, port: number): SetupNote[] {
   if (guide.doc === "square") links.push({ label: "Square developer console", href: "https://developer.squareup.com/console/en/apps" });
   if (guide.doc === "slack") links.push({ label: "Slack apps", href: "https://api.slack.com/apps" });
   if (guide.doc === "twilio") links.push({ label: "Twilio console", href: "https://console.twilio.com" });
+  if (guide.doc === "whatsapp") links.push({ label: "Meta for Developers", href: "https://developers.facebook.com/apps" });
   return [{ title: `Set up ${guide.label}`, items: steps[guide.doc] ?? guide.steps.map((label) => ({ label })), links }];
 }

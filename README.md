@@ -49,6 +49,7 @@ Connectors come in three modules. A **Store** is a booking platform that owns it
 | GlossGenius (experimental) | Store, shadow mode: services, prices and open times read from the public booking page; bookings go to a shared Google Calendar plus a text to the merchant, who adds them to GlossGenius | [docs/connectors/glossgenius.md](docs/connectors/glossgenius.md) |
 | Twilio SMS (optional) | Communication, notices only: texts the merchant about every agent booking, cancel and reschedule | [docs/connectors/twilio.md](docs/connectors/twilio.md) |
 | Slack (optional) | Communication, two-way: agent messages land in a Slack channel and the owner answers by typing in the thread; booking notices too. Socket Mode, no inbound URL | [docs/connectors/slack.md](docs/connectors/slack.md) |
+| WhatsApp (optional) | Communication, two-way: agent messages land on the owner's WhatsApp and the owner answers by swipe-replying; booking notices too. Meta Cloud API, needs a public URL for Meta's webhook | [docs/connectors/whatsapp.md](docs/connectors/whatsapp.md) |
 
 Adding a connector: [docs/connectors/README.md](docs/connectors/README.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 
