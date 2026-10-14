@@ -165,7 +165,7 @@ The log shows `client ip: peer=... x-forwarded-for=... cf-connecting-ip=... -> <
 
 ## 3. Expose it over HTTPS with cloudflared
 
-Cloud agents (Muse, ChatGPT agent mode, Grok) can't reach `localhost`. A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) gives the gateway a public HTTPS URL without opening ports. Install it with `brew install cloudflared` or a package from Cloudflare's docs.
+Cloud agents (Muse, Grok) can't reach `localhost`. A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) gives the gateway a public HTTPS URL without opening ports. Install it with `brew install cloudflared` or a package from Cloudflare's docs.
 
 ### Quick tunnel (demo, no account)
 
@@ -182,7 +182,7 @@ The hostname is random and changes on every run. cloudflared forwards the public
 
 A gateway running outside Docker with the default `HOST=127.0.0.1` and no `ALLOWED_HOSTS` only accepts `Host: localhost|127.0.0.1|[::1]`, so tunnel requests fail until you set `ALLOWED_HOSTS`.
 
-Quick tunnels are for demos. They have no uptime guarantee, and the URL dies with the process.
+Quick tunnels are for demos. They have no uptime guarantee, and the URL dies with the process. They also don't work for ChatGPT or Claude.ai: ChatGPT refuses `trycloudflare.com` links, so for those agents host the gateway on a real domain.
 
 ### Named tunnel (stable hostname)
 
