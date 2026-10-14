@@ -423,18 +423,18 @@ describe("returning customer", () => {
     expect(g.ok && g.data).toMatchObject({ status: "answered", messages: [{ from: "agent" }, { from: "owner", text: "Sure" }] });
   });
 
-  it("an answered thread left open is superseded and closed without a notice", async () => {
+  it("an answered thread still open is left alone: a new channel thread opens and the old token keeps its replies", async () => {
     const { ops, channel } = setup();
     const a = await leaveOk(ops);
     await ops.onOwnerMessage({ provider_ref: "ts.1", provider_msg_id: "o1", user_id: "U", text: "No cats" });
     await leaveOk(ops, { message: "What about rabbits?" });
+    expect(channel.opened).toHaveLength(2);
+    expect(await ops.onOwnerMessage({ provider_ref: "ts.1", provider_msg_id: "o2", user_id: "U", text: "Dogs only" })).toBe("accepted");
     const g = await ops.getThread({ thread_id: a.thread_id, read_token: a.read_token });
-    expect(g.ok && g.data.status).toBe("closed");
-    expect(channel.opened).toHaveLength(1);
-    expect(channel.posts.map((p) => p.text).join("\n")).not.toContain(CLOSE_NOTICE);
+    expect(g.ok && g.data).toMatchObject({ status: "answered", messages: [{}, {}, { from: "owner", text: "Dogs only" }] });
   });
 
-  it("opens a new channel thread while the last one awaits the owner, or once the reply window has passed", async () => {
+  it("opens a new channel thread while the last one is open, or once the reply window has passed", async () => {
     const { ops, channel, advance } = setup();
     const a = await leaveOk(ops);
     await leaveOk(ops, { message: "Also, rabbits?" });

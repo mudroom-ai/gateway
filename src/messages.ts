@@ -26,9 +26,8 @@
 // the owner's last reply with no agent follow-up, 7 days while still awaiting the
 // owner (limits.thread_close_after_reply_hours / thread_close_unanswered_days).
 // An owner who types close, closed or done anyway is still honoured, silently.
-// A returning customer (same phone or email) whose last thread the owner answered, or which closed within
-// thread_close_after_reply_hours, gets a new gateway thread posted into the same channel thread, so the owner reads one
-// conversation; the answered thread closes as superseded.
+// A returning customer (same phone or email) whose latest thread closed within thread_close_after_reply_hours gets a
+// new gateway thread posted into the same channel thread, so the owner reads one conversation.
 //
 // Owners sometimes answer in the channel instead of the thread. A top-level message (no provider_ref) counts as the reply when
 // exactly one thread is awaiting the owner: it is stored and acknowledged like a
@@ -503,16 +502,17 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       if (prior) return prior;
     }
     const keys = contactKeys(customer);
-    // A returning customer continues the owner's channel thread once the owner has answered it (or it closed within the
-    // reply window), instead of opening a second one. The gateway thread is still new, with its own token and messages,
-    // so a caller who only knows the contact sees nothing said before. The newest thread on a channel thread owns replies.
+    // A returning customer whose latest thread closed within the reply window continues that channel thread instead of
+    // opening a second one. The gateway thread is still new, with its own token and messages, so a caller who only knows
+    // the contact sees nothing said before. Only closed threads: they take no more owner replies, so routing the channel
+    // thread to the new one (newest wins) takes nothing from the agent holding the old token, and nothing is closed
+    // without a token.
     const prior =
       mode === "two_way" && supportsThreads(channel)
         ? store.latestThreadForContact(merchant, keys, nowMs - config.limits.thread_close_after_reply_hours * HOUR_MS)
         : null;
-    const reuse = prior && prior.state !== "awaiting_owner" ? prior : null;
-    const supersede = reuse && reuse.state !== "closed" ? reuse : null;
-    const open = store.countOpenThreads(merchant, keys) - (supersede ? 1 : 0);
+    const reuse = prior?.state === "closed" ? prior : null;
+    const open = store.countOpenThreads(merchant, keys);
     if (open >= config.limits.max_open_threads_per_contact) {
       return err(
         "thread_limit_reached",
@@ -561,8 +561,6 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       log(`[gateway] owner channel refused a message (nothing stored): ${errMsg(sent.error)}`);
       return permanentError();
     }
-    // Replies on the channel thread now reach the new thread, so the answered one is done (no notice: the new message is next).
-    if (supersede) closeRow(supersede, "superseded", { by_thread: t.thread_id });
     const result: LeaveMessageResult = { ...view(store.getThread(t.thread_id)!), read_token: token };
     if (key) store.setMessageResponse(merchant, key, result);
     log(`[gateway] message left thread=${t.thread_id} mode=${mode} delivery=${result.delivery}${reuse ? ` continues=${reuse.thread_id}` : ""}`);
