@@ -776,15 +776,18 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     const t = waiting[0]!;
     if (m.backfilled || m.sent_at_ms !== undefined) {
       // "Exactly one thread waiting" must have been true when the owner typed, not just now (a Slack catch-up or a
-      // delayed webhook retry): the waiting thread must already have been waiting (`t.updated_at_ms <= sent + skew`),
-      // and no other thread may have changed since (`sent - skew`), or the message may belong to another customer.
+      // delayed webhook retry). Another thread opening, closing, being answered or getting a follow-up in the window
+      // means the message may belong to someone else. The waiting thread's own opening inside that window is the
+      // prompt being answered, not that ambiguity.
       const sent = m.sent_at_ms;
-      if (
-        typeof sent !== "number" ||
-        !Number.isFinite(sent) ||
-        t.updated_at_ms > sent + BACKFILL_SKEW_MS ||
-        store.countThreadsTouchedSince(merchant, sent - BACKFILL_SKEW_MS, t.thread_id) > 0
-      ) {
+      if (typeof sent !== "number" || !Number.isFinite(sent)) {
+        log(`[gateway] top-level owner message from a gap ignored: threads changed since it was typed`);
+        return "ignored";
+      }
+      // While nothing else has touched the thread, updated_at_ms is when the opener became visible. After a
+      // follow-up that stamp moves, so the row's creation is the earliest it could have been the one waiting.
+      const openedAt = t.agent_count === 1 ? t.updated_at_ms : Date.parse(t.created_at);
+      if (openedAt > sent + BACKFILL_SKEW_MS || store.countThreadsTouchedSince(merchant, sent - BACKFILL_SKEW_MS, t.thread_id) > 0) {
         log(`[gateway] top-level owner message from a gap ignored: threads changed since it was typed`);
         return "ignored";
       }

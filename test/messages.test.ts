@@ -556,6 +556,38 @@ describe("owner side", () => {
     expect(channel.notices).toEqual([]);
   });
 
+  it("a backfilled prompt reply still matches when the only recent change is that thread opening", async () => {
+    const { ops, store } = setup();
+    const a = await leaveOk(ops); // 17:00:00
+    const typed = Date.parse("2026-10-08T17:00:02Z"); // inside BACKFILL_SKEW_MS of the opener
+    expect(await ops.onOwnerMessage({ provider_msg_id: "p1", user_id: "U1", text: "Yes, 3pm", backfilled: true, sent_at_ms: typed })).toBe("accepted");
+    expect(store.getThread(a.thread_id)!.state).toBe("answered");
+
+    // Another thread touched inside the same window: the reply could be theirs.
+    const s2 = setup();
+    const first = await leaveOk(s2.ops);
+    const second = await leaveOk(s2.ops, { customer: { name: "Bo", email: "bo@example.com" } });
+    s2.advance(2_000);
+    await s2.ops.closeThread({ thread_id: second.thread_id, read_token: second.read_token });
+    expect(
+      await s2.ops.onOwnerMessage({ provider_msg_id: "p2", user_id: "U1", text: "Yes, 3pm", backfilled: true, sent_at_ms: Date.parse("2026-10-08T17:00:03Z") }),
+    ).toBe("ignored");
+    expect(s2.store.getThread(first.thread_id)!.state).toBe("awaiting_owner");
+
+    // A follow-up on this thread is not another customer. A reply typed before the thread existed still is not its reply.
+    const s3 = setup();
+    const third = await leaveOk(s3.ops);
+    s3.advance(30_000);
+    expect(codeOf(await s3.ops.agentFollowUp({ thread_id: third.thread_id, read_token: third.read_token, message: "Still there?" }))).toBe("ok");
+    expect(
+      await s3.ops.onOwnerMessage({ provider_msg_id: "p3", user_id: "U1", text: "Yes, 3pm", backfilled: true, sent_at_ms: Date.parse("2026-10-08T16:59:00Z") }),
+    ).toBe("ignored");
+    expect(
+      await s3.ops.onOwnerMessage({ provider_msg_id: "p4", user_id: "U1", text: "Yes, 3pm", backfilled: true, sent_at_ms: Date.parse("2026-10-08T17:00:32Z") }),
+    ).toBe("accepted");
+    expect(s3.store.getThread(third.thread_id)!.state).toBe("answered");
+  });
+
   it("a top-level message typed before a queued opener reached the channel is not taken as its reply", async () => {
     const { ops, store, channel, advance } = setup();
     channel.failNext.push(unavailable());

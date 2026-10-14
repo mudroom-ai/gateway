@@ -574,11 +574,13 @@ export class Store {
     return rows.map((r) => r.provider_ref as string);
   }
 
-  /** Two-way threads of this merchant whose state or messages changed at or after `sinceMs` (new threads included). */
+  /** Two-way threads of this merchant whose state or messages changed at or after `sinceMs` (new threads included). `exceptThreadId` is left out: the waiting thread's own opening is not ambiguity. */
   countThreadsTouchedSince(merchantId: string, sinceMs: number, exceptThreadId?: string): number {
     const r = (
       exceptThreadId
-        ? this.db.prepare("SELECT COUNT(*) AS n FROM threads WHERE merchant_id = ? AND mode = 'two_way' AND updated_at_ms >= ? AND thread_id != ?").get(merchantId, sinceMs, exceptThreadId)
+        ? this.db
+            .prepare("SELECT COUNT(*) AS n FROM threads WHERE merchant_id = ? AND mode = 'two_way' AND updated_at_ms >= ? AND thread_id != ?")
+            .get(merchantId, sinceMs, exceptThreadId)
         : this.db.prepare("SELECT COUNT(*) AS n FROM threads WHERE merchant_id = ? AND mode = 'two_way' AND updated_at_ms >= ?").get(merchantId, sinceMs)
     ) as Raw;
     return Number(r.n);
