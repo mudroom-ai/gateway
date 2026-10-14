@@ -43,18 +43,16 @@ function clock(hhmm: string): string {
 
 const spans = (s: { start: string; end: string }[]) => (s.length ? s.map((h) => `${clock(h.start)}–${clock(h.end)}`).join(", ") : "Closed");
 
-/** Whether the business is open at `now`, in its own zone. */
-function openNow(config: Config, now: DateTime): boolean {
-  const local = now.setZone(config.timezone);
-  const day = DAYS[local.weekday - 1]![0];
-  const hm = local.toFormat("HH:mm");
-  return config.hours[day].some((s) => s.start <= hm && hm < s.end);
-}
-
-/** "PT" style short zone name, else the IANA id. */
+/** "Pacific Time" style generic zone name (no daylight/standard), else the IANA id. */
 function zoneLabel(config: Config, now: DateTime): string {
-  const short = now.setZone(config.timezone).toFormat("ZZZZ");
-  return /^[A-Z]{2,5}$/.test(short) ? short.replace(/^P[DS]T$/, "PT").replace(/^E[DS]T$/, "ET").replace(/^C[DS]T$/, "CT").replace(/^M[DS]T$/, "MT") : config.timezone;
+  try {
+    const name = new Intl.DateTimeFormat("en-US", { timeZone: config.timezone, timeZoneName: "longGeneric" })
+      .formatToParts(now.toJSDate())
+      .find((p) => p.type === "timeZoneName")?.value;
+    return name && !/^GMT/.test(name) ? name : config.timezone;
+  } catch {
+    return config.timezone;
+  }
 }
 
 const price = (cents: number, currency: string) =>
@@ -64,7 +62,6 @@ export function playgroundPage(config: Config, base: string, now: DateTime = Dat
   const prompt = playgroundPrompt(config, base);
   const local = now.setZone(config.timezone);
   const today = DAYS[local.weekday - 1]![0];
-  const open = openNow(config, now);
   const zone = zoneLabel(config, now);
   const services = config.services
     .map(
@@ -219,7 +216,6 @@ dialog[open]{animation:pop 260ms cubic-bezier(.2,.9,.3,1.2)}
 
 <main id="main-content">
   <header class="hero">
-    <p class="eyebrow rise"><span class="status"><span class="dot${open ? " on" : ""}"></span>${open ? "Open now" : "Closed now"} · ${esc(zone)}</span></p>
     <h1 class="rise d1">${esc(config.name)}</h1>
     <p class="dek rise d2">A pretend shop with a real calendar, open to AI agents. Your agent is the customer: it checks times, gets a quote and books. Questions go to a human owner in Slack.</p>
     <div class="actions rise d3">
