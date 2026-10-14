@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { createSlackChannel, type SlackChannel } from "../connectors/slack.js";
 import { createTwilioChannel } from "../connectors/twilio.js";
-import { createWhatsappChannel, WHATSAPP_WEBHOOK_PATH, type WhatsappChannel } from "../connectors/whatsapp.js";
+import { createWhatsappChannel, waNumber, WHATSAPP_WEBHOOK_PATH, type WhatsappChannel } from "../connectors/whatsapp.js";
 import { showGuide, type GuideIO, type SetupGuide } from "./guide.js";
 import type { Prompter } from "./init.js";
 import { style } from "./picker.js";
@@ -112,7 +112,7 @@ export function channelEnvLines(a: ChannelAnswers, kv: (k: string, v: string) =>
   if (a.owner) {
     lines.push(
       glossgenius ? "# Owner SMS (Twilio): texts you about each agent booking so you can add it to GlossGenius." : "# Owner SMS (Twilio): texts you about each agent booking, cancel and reschedule.",
-      kv("OWNER_PHONE", a.owner.phone),
+      ...(a.whatsapp ? [] : [kv("OWNER_PHONE", a.owner.phone)]),
       kv("TWILIO_ACCOUNT_SID", a.owner.accountSid),
       kv("TWILIO_AUTH_TOKEN", a.owner.authToken),
       kv("TWILIO_FROM", a.owner.from),
@@ -176,6 +176,16 @@ const required = (what: string) => (s: string) => {
 const prefixed = (what: string, prefix: string) => (s: string) => {
   const v = required(what)(s);
   if (!v.startsWith(prefix)) throw new Error(`${what} starts with ${prefix}`);
+  return v;
+};
+export const validWhatsappPhone = (s: string) => {
+  const v = required("Phone")(s);
+  if (!/^\d{5,}$/.test(waNumber(v))) throw new Error("OWNER_PHONE must be the owner's WhatsApp number with country code, e.g. +1 202 555 0199");
+  return v;
+};
+export const validWhatsappPhoneId = (s: string) => {
+  const v = required("Phone number ID")(s);
+  if (!/^\d+$/.test(v)) throw new Error("WHATSAPP_PHONE_NUMBER_ID must be the numeric Phone number ID from Meta app > WhatsApp > API Setup, not the phone number");
   return v;
 };
 
@@ -263,8 +273,8 @@ export async function askOwnerChannel(
     const secretSaved = trim(known("WHATSAPP_APP_SECRET"));
     return {
       whatsapp: whatsappAnswer({
-        phone: await askValid(p, "Your WhatsApp number (e.g. +1 202 555 0199)", f["owner-phone"] ?? known("OWNER_PHONE"), required("Phone")),
-        phoneId: await askValid(p, "Phone number ID (WhatsApp -> API Setup; a number, not the phone number)", f["whatsapp-phone-id"] ?? known("WHATSAPP_PHONE_NUMBER_ID"), required("Phone number ID")),
+        phone: await askValid(p, "Your WhatsApp number (e.g. +1 202 555 0199)", f["owner-phone"] ?? known("OWNER_PHONE"), validWhatsappPhone),
+        phoneId: await askValid(p, "Phone number ID (WhatsApp -> API Setup; a number, not the phone number)", f["whatsapp-phone-id"] ?? known("WHATSAPP_PHONE_NUMBER_ID"), validWhatsappPhoneId),
         token: await askValid(p, "Access token", f["whatsapp-token"] ?? tokenSaved, required("Access token"), tokenSaved && !f["whatsapp-token"] ? "from .env" : undefined),
         secret: await askValid(p, "App Secret (App settings -> Basic)", f["whatsapp-app-secret"] ?? secretSaved, required("App Secret"), secretSaved && !f["whatsapp-app-secret"] ? "from .env" : undefined),
         verify: f["whatsapp-verify-token"] ?? known("WHATSAPP_VERIFY_TOKEN"),

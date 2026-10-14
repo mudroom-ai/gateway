@@ -5,6 +5,7 @@ import { parseEnv } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { EXISTING_ITEMS, GOAL_ITEMS, GOOGLE_SETUP_STEPS, INTRO, READY_ITEMS, buildEnvFile, guideUrl, parseHours, renderHours, runInit, validGlossGeniusUrl } from "../src/cli/init.js";
+import { validWhatsappPhone, validWhatsappPhoneId } from "../src/cli/init-channel.js";
 import { FakeCalendarConnector } from "./helpers/fake-calendar.js";
 import { ScriptedPrompter } from "./helpers/scripted-prompter.js";
 
@@ -205,6 +206,26 @@ describe("init wizard: WhatsApp owner channel", () => {
     });
     expect(again).toBe(0);
     expect(parseEnv(readFileSync(join(dir, ".env"), "utf8")).WHATSAPP_VERIFY_TOKEN).toBe(before.WHATSAPP_VERIFY_TOKEN);
+  });
+
+  it("writes OWNER_PHONE only once when both WhatsApp and Twilio are configured, and validates phone + phone-id inputs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-wa4-"));
+    const code = await runInit(
+      ["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", ...WA_FLAGS, "--twilio-sid", "AC123", "--twilio-token", "tok", "--twilio-from", "+12025550100"],
+      {
+        env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1" },
+        makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+        makeWhatsapp: () => ({ checkAccess: async () => {} }),
+        log: () => {},
+      },
+    );
+    expect(code).toBe(0);
+    const raw = readFileSync(join(dir, ".env"), "utf8");
+    expect(raw.match(/^OWNER_PHONE=/gm)).toHaveLength(1);
+    expect(validWhatsappPhone("+1 202 555 0199")).toBe("+1 202 555 0199");
+    expect(() => validWhatsappPhone("not-a-phone")).toThrow(/OWNER_PHONE/);
+    expect(validWhatsappPhoneId("123456789012345")).toBe("123456789012345");
+    expect(() => validWhatsappPhoneId("+1 202 555 0199")).toThrow(/Phone number ID/);
   });
 });
 

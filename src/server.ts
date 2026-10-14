@@ -203,14 +203,14 @@ export function createApp(
   const connector = toBookingConnector(config, deps.connector ?? createConnector(config, settings));
   const store = deps.store ?? openStore(settings.db_path);
   const app = express();
+  // Throws at startup on an invalid TRUST_PROXY address/CIDR.
+  app.set("trust proxy", settings.trust_proxy);
+  const ipOpts = { trustCfHeader: settings.trust_cf_connecting_ip && Array.isArray(settings.trust_proxy), debug: settings.trust_proxy_debug };
   app.use(hostValidation(settings.host, settings.allowed_hosts, sendError));
   // A provider webhook (WhatsApp) verifies a signature over the raw bytes, so it is mounted before the JSON parser.
   const owner = deps.owner === undefined ? createOwnerChannel(settings, connector) : (deps.owner ?? undefined);
-  if (owner?.webhook) app.all(owner.webhook.path, requestRateLimit(config.limits, sendError, { trustCfHeader: false, debug: false }), express.raw({ type: () => true, limit: "256kb" }), webhookHandler(owner.webhook));
+  if (owner?.webhook) app.all(owner.webhook.path, requestRateLimit(config.limits, sendError, ipOpts), express.raw({ type: () => true, limit: "256kb" }), webhookHandler(owner.webhook));
   app.use(express.json());
-
-  // Throws at startup on an invalid TRUST_PROXY address/CIDR.
-  app.set("trust proxy", settings.trust_proxy);
 
   app.use(accessLog());
 
@@ -230,7 +230,6 @@ export function createApp(
   });
 
   ops.book = withContactLimits(ops.book, { limits: config.limits, ...sqliteContactLookups(store.db, config.merchant_id) });
-  const ipOpts = { trustCfHeader: settings.trust_cf_connecting_ip && Array.isArray(settings.trust_proxy), debug: settings.trust_proxy_debug };
   const guard = [authMiddleware(settings.api_keys, sendError), requestRateLimit(config.limits, sendError, ipOpts)];
 
   // Rate-limited like the API: an agent may fetch this on every task.

@@ -209,11 +209,14 @@ export interface OwnerInboundMessage {
   user_id: string;
   text: string;
   /**
-   * True when the channel fetched it after a gap instead of receiving it live. The core then skips hints about it and,
-   * for a top-level message, needs `sent_at_ms` to check which thread was waiting when it was typed.
+   * True when the channel fetched it after a gap instead of receiving it live. The core then skips hints about it and
+   * requires `sent_at_ms` on a top-level message.
    */
   backfilled?: boolean;
-  /** When the owner sent it, by the provider's clock. Required with `backfilled`. */
+  /**
+   * When the owner sent it, by the provider's clock (epoch ms). For a top-level (unquoted) message, the core checks
+   * that no thread changed since `sent_at_ms` before matching it to the waiting thread. Required with `backfilled`.
+   */
   sent_at_ms?: number;
 }
 

@@ -154,7 +154,7 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
     if (res.status === 401 || res.status === 403 || AUTH_CODES.has(code) || (code >= 200 && code <= 299)) {
       throw new ConnectorError("channel_auth_failed", `WhatsApp ${code}: ${whatsappHint(code, detail)}`);
     }
-    throw new ConnectorError("channel_rejected", `WhatsApp ${code}: ${detail}`, { cause: error });
+    throw new ConnectorError("channel_rejected", `WhatsApp ${code}: ${whatsappHint(code, detail)}`, { cause: error });
   }
 
   async function sendMessage(payload: Record<string, unknown>): Promise<string> {
@@ -173,8 +173,7 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
       return id;
     } catch (e) {
       const code = ((e as ConnectorError)?.cause as GraphError | undefined)?.code;
-      if (code !== WINDOW_CLOSED_CODE) throw e;
-      if (!opts.template) throw new ConnectorError("channel_rejected", `WhatsApp ${WINDOW_CLOSED_CODE}: ${whatsappHint(WINDOW_CLOSED_CODE)}`, { cause: e });
+      if (code !== WINDOW_CLOSED_CODE || !opts.template) throw e;
       const id = await sendMessage({
         type: "template",
         template: { name: opts.template.name, language: { code: opts.template.language }, components: [{ type: "body", parameters: [{ type: "text", text: templateParam(text) }] }] },

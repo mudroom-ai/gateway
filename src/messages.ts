@@ -774,9 +774,10 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       return "ignored";
     }
     const t = waiting[0]!;
-    if (m.backfilled) {
-      // "Exactly one thread waiting" must have been true when the owner typed, not just now: if any thread opened,
-      // closed, was answered or got a follow-up since, the message may belong to another customer, so it is left alone.
+    if (m.backfilled || m.sent_at_ms !== undefined) {
+      // "Exactly one thread waiting" must have been true when the owner typed, not just now (a Slack catch-up or a
+      // delayed webhook retry): if any thread opened, closed, was answered or got a follow-up since, the message may
+      // belong to another customer, so it is left alone.
       const sent = m.sent_at_ms;
       if (typeof sent !== "number" || !Number.isFinite(sent) || store.countThreadsTouchedSince(merchant, sent - BACKFILL_SKEW_MS) > 0) {
         log(`[gateway] top-level owner message from a gap ignored: threads changed since it was typed`);

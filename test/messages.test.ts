@@ -545,6 +545,9 @@ describe("owner side", () => {
     await s2.ops.closeThread({ thread_id: second.thread_id, read_token: second.read_token });
     expect(await s2.ops.onOwnerMessage(top("g3", typed))).toBe("ignored");
     expect(s2.store.getThread(first.thread_id)!.state).toBe("awaiting_owner");
+    // Same guard applies to a live webhook delivery carrying sent_at_ms without backfilled (e.g. a delayed WhatsApp retry).
+    expect(await s2.ops.onOwnerMessage({ provider_msg_id: "wamid.late", user_id: "12025550199", text: "Yes, 3pm", sent_at_ms: typed })).toBe("ignored");
+    expect(s2.store.getThread(first.thread_id)!.state).toBe("awaiting_owner");
     expect(channel.notices).toEqual([]);
   });
 

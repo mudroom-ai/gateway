@@ -8,7 +8,7 @@ import {
   siteBookingUrl, squareAuthorize, validCurrency, validGlossGeniusUrl, validHoursSpec, validKeyFile, validSquareEnv, validZone,
   type Answers, type Backend, type ServiceAnswer, type SquareOAuth,
 } from "./init.js";
-import { CHANNEL_GUIDES, channelFromFlags, ownerSms, slackAnswer, whatsappAnswer, type ChannelFlags } from "./init-channel.js";
+import { CHANNEL_GUIDES, channelFromFlags, ownerSms, slackAnswer, validWhatsappPhone, validWhatsappPhoneId, whatsappAnswer, type ChannelFlags } from "./init-channel.js";
 import { READY_ITEMS, type SetupGuide } from "./guide.js";
 import { WEBSITE_NOTES, type WebsiteDeps } from "./init-website.js";
 import { buildProfile, detectLlm, extractWithLlm, keyCandidate, type LlmCandidate, type SiteProfile } from "./profile.js";
@@ -295,8 +295,8 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
           ask("twilio-from", "Twilio phone number to send from", flag("twilio-from") ?? known("TWILIO_FROM"), requireLine("Twilio number"));
           if (backend && values.has("twilio-from")) backend.owner = ownerSms({ phone: text("owner-phone"), sid: text("twilio-sid"), token: text("twilio-token"), from: text("twilio-from") });
         } else if (!channelLater && channel === 3) {
-          ask("owner-phone", "Your WhatsApp number (e.g. +1 202 555 0199)", flag("owner-phone") ?? known("OWNER_PHONE"), requireLine("Phone"));
-          ask("whatsapp-phone-id", "Phone number ID", flag("whatsapp-phone-id") ?? known("WHATSAPP_PHONE_NUMBER_ID"), requireLine("Phone number ID"), [{ text: "WhatsApp → API Setup. A number, not the phone number itself." }]);
+          ask("owner-phone", "Your WhatsApp number (e.g. +1 202 555 0199)", flag("owner-phone") ?? known("OWNER_PHONE"), validWhatsappPhone);
+          ask("whatsapp-phone-id", "Phone number ID", flag("whatsapp-phone-id") ?? known("WHATSAPP_PHONE_NUMBER_ID"), validWhatsappPhoneId, [{ text: "WhatsApp → API Setup. A number, not the phone number itself." }]);
           ask("whatsapp-token", "Access token", flag("whatsapp-token") ?? known("WHATSAPP_ACCESS_TOKEN"), requireLine("Access token"), [{ text: "From WhatsApp → API Setup (24-hour test token) or a System User token (permanent)." }], true);
           ask("whatsapp-app-secret", "App Secret", flag("whatsapp-app-secret") ?? known("WHATSAPP_APP_SECRET"), requireLine("App Secret"), [{ text: "App settings → Basic → App Secret. It signs each webhook delivery." }], true);
           ask("whatsapp-template", "Approved template for messages outside the 24-hour window, name or name:lang (Enter = none)", flag("whatsapp-template") ?? known("WHATSAPP_TEMPLATE"), (s) => s, [{ text: "Optional. Leave blank for the test number: just message it from your phone first." }]);

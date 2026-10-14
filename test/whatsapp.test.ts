@@ -123,7 +123,11 @@ describe("whatsappOwnerChannel: sending", () => {
     const bad = meta(() => graphError(131030, 400, { error_data: { details: "Recipient phone number not in allowed list" } }));
     const e3 = await bad.ch.postToThread("wamid.A", "hi").catch((x: unknown) => x);
     expect((e3 as ConnectorError).code).toBe("channel_rejected");
-    expect((e3 as ConnectorError).message).toContain("not in allowed list");
+    expect((e3 as ConnectorError).message).toContain("API Setup > To");
+    const other = meta(() => graphError(131026, 400, { error_data: { details: "Message undeliverable" } }));
+    const e4 = await other.ch.postToThread("wamid.A", "hi").catch((x: unknown) => x);
+    expect((e4 as ConnectorError).code).toBe("channel_rejected");
+    expect((e4 as ConnectorError).message).toContain("Message undeliverable");
   });
 
   it("5xx, 429, Meta's temporary codes, timeouts and network errors are channel_unavailable with a retry", async () => {
@@ -157,7 +161,7 @@ describe("whatsappOwnerChannel: sending", () => {
     const wrongId = meta(() => graphError(100, 400));
     const e = await wrongId.ch.checkAccess().catch((x: unknown) => x);
     expect((e as ConnectorError).code).toBe("channel_rejected");
-    expect((e as ConnectorError).message).toContain("100");
+    expect((e as ConnectorError).message).toContain("WHATSAPP_PHONE_NUMBER_ID");
   });
 
   it("status follows start and stop", async () => {
