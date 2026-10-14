@@ -30,9 +30,9 @@ CREATE INDEX IF NOT EXISTS agent_requests_at ON agent_requests (at_ms);
 /** Rows older than this are deleted on each insert pass; the feed looks back 7 days. */
 const KEEP_MS = 30 * 86_400_000;
 
-/** The route kind for an /api path (relative to /api), or null for paths the feed ignores. */
+/** The route kind for an /api path (relative to /api), or null for paths the feed ignores. Case-insensitive like Express's routing, so the demo caps cannot be dodged with /api/BOOK. */
 export function routeKind(method: string, path: string): RouteKind | null {
-  const p = path.replace(/\/+$/, "");
+  const p = path.toLowerCase().replace(/\/+$/, "");
   if (method === "GET" && p === "/services") return "services";
   if (method === "POST") {
     const m = /^\/(slots|quote|book|cancel|reschedule)$/.exec(p);

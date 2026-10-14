@@ -102,6 +102,18 @@ describe("demo mode off", () => {
   });
 });
 
+describe("demo limits", () => {
+  it("cap bookings per IP, whatever the path's case", async () => {
+    const { demoLimits } = await import("../src/demo/limits.js");
+    const refused: string[] = [];
+    const mw = demoLimits((_res, e) => void refused.push(e.code), { limits: { bookings_per_ip_per_day: 2, bookings_per_vendor_per_hour: 100, messages_per_ip_per_day: 100 } });
+    const req = (path: string) => ({ method: "POST", path, ip: "203.0.113.9", socket: { remoteAddress: "203.0.113.9" }, app: { get: () => undefined }, get: () => undefined }) as never;
+    let passed = 0;
+    for (const p of ["/book", "/BOOK", "/Book/"]) mw(req(p), {} as never, () => void passed++);
+    expect([passed, refused]).toEqual([2, ["rate_limited"]]);
+  });
+});
+
 describe("auto-cancel", () => {
   it("cancels bookings older than the TTL, keeps newer ones, and survives a restart (state is the table)", async () => {
     const fake = new FakeCalendarConnector();
