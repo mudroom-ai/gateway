@@ -62,7 +62,7 @@ import { askSetupMode } from "./setup-mode.js";
 import { startSetupServer, type WebSetup } from "./setup-server.js";
 import { cleanLine } from "./profile.js";
 import { collectWebSetup } from "./setup-flow.js";
-import { selectTerminalTimeZone, type TimeZoneSource } from "./time-zones.js";
+import { isTimeZone, selectTerminalTimeZone, type TimeZoneSource } from "./time-zones.js";
 import { readSecret } from "./secret.js";
 
 export { READY_ITEMS } from "./guide.js";
@@ -808,7 +808,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   let webSession: WebSetup | undefined;
   const finish = async (code: number): Promise<number> => {
     if (!webSession) return code;
-    log(code === 0 ? "\nSetup finished. Close the browser tab, or press Enter here to exit." : "\nSetup stopped. Close the browser tab, or press Enter here to exit.");
+    log(code === 0 ? "\nSetup finished. Click Close in the browser, or press Enter here. Then close the tab." : "\nSetup stopped. Click Close in the browser, or press Enter here. Then close the tab.");
     webSession.markDone(code === 0);
     await webSession.waitForExit();
     await webSession.close();
@@ -986,8 +986,11 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         if (siteZone && siteZone !== localZone) log(`Your site points to the time zone ${cleanLine(siteZone, 64)}; this machine is set to ${localZone}.`);
         // After a site was read, a default that is only this machine's zone is labelled as such: it follows the site's summary and could be taken for the site's.
         const zoneKnown = f.timezone ?? saved?.timezone ?? siteZone;
-        const timezone = p.timeZone ? validZone(await p.timeZone(zoneKnown ?? localZone, f.timezone ? "provided" : saved?.timezone ? "saved" : siteZone ? "website" : "device")) :
-          await askChecked(p, "Time zone", zoneKnown ?? localZone, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
+        const zoneSuggestion = zoneKnown && isTimeZone(zoneKnown) ? zoneKnown : localZone;
+        if (zoneKnown && zoneSuggestion !== zoneKnown) log(`"${zoneKnown}" is not an IANA time zone (e.g. America/New_York). Choose another.`);
+        const zoneSource: TimeZoneSource = zoneSuggestion !== zoneKnown ? "device" : f.timezone ? "provided" : saved?.timezone ? "saved" : siteZone ? "website" : "device";
+        const timezone = p.timeZone ? validZone(await p.timeZone(zoneSuggestion, zoneSource)) :
+          await askChecked(p, "Time zone", zoneSuggestion, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
         const currency = await askChecked(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
         // Square and GlossGenius set services, prices and hours themselves. Not ready, they are asked on the next
         // run, unless the website step found services or hours: those are asked about now, or the reading is lost.

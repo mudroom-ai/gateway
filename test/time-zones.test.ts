@@ -20,6 +20,14 @@ describe("shared time-zone picker", () => {
     expect(p.choices[0]![0]!.label).not.toContain("US/Pacific");
   });
 
+  it("offers the machine zone when the suggestion is not a time zone", async () => {
+    const p = new ScriptedPrompter([""]);
+    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const fallback = isTimeZone(local) ? local : "UTC";
+    expect(await selectTerminalTimeZone(p, "Foo/Bar", "provided")).toBe(fallback);
+    expect(p.choices[0]![0]!.label).toBe(zoneOption(fallback).label);
+  });
+
   it("lets terminal users change zones by searching for a city", async () => {
     const p = new ScriptedPrompter(["2", "San Francisco", "1", "1"]);
     expect(await selectTerminalTimeZone(p, "Europe/London", "device")).toBe("America/Los_Angeles");

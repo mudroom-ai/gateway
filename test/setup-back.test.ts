@@ -68,6 +68,16 @@ async function wizard(args: string[], answer: (step: SetupStep, dir: string, url
 
 const defaults = (step: SetupStep): string => step.kind === "choose" ? String(step.index ?? 0) : step.def ?? "";
 
+describe("browser setup flags", () => {
+  it("continues when --website is not a website address", async () => {
+    const logs: string[] = [];
+    await wizard(["--no-backend", "--website", "localhost"], (step) => step.question === "Business or your name" ? "Ace" : defaults(step), { log: (m) => logs.push(m) });
+    const notes = logs.filter((line) => line.includes("Carrying on without it"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("That does not look like a website address");
+  });
+});
+
 describe("browser Back navigation", () => {
   it("restores answers, skips validation attempts, and lets the final review return to editing", async () => {
     let names = 0;

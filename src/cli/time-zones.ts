@@ -46,6 +46,11 @@ export const timeZoneSourceLabel = (source: TimeZoneSource) => ({
 
 /** Same confirm → search → select flow as the browser; no IANA syntax required. */
 export async function selectTerminalTimeZone(p: Pick<Prompter, "ask" | "choose">, suggested: string, source: TimeZoneSource): Promise<string> {
+  if (!isTimeZone(suggested)) {
+    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    suggested = isTimeZone(local) ? local : "UTC";
+    source = "device";
+  }
   const selected = zoneOption(suggested);
   for (;;) {
     const use = await p.choose("Your business time zone", [{ label: selected.label, status: selected.country }, { label: "Change time zone" }], 0,

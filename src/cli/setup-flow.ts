@@ -10,7 +10,7 @@ import {
 } from "./init.js";
 import { CHANNEL_GUIDES, channelFromFlags, ownerSms, slackAnswer, type ChannelFlags } from "./init-channel.js";
 import { READY_ITEMS, type SetupGuide } from "./guide.js";
-import type { WebsiteDeps } from "./init-website.js";
+import { WEBSITE_NOTES, type WebsiteDeps } from "./init-website.js";
 import { buildProfile, detectLlm, extractWithLlm, keyCandidate, type LlmCandidate, type SiteProfile } from "./profile.js";
 import { crawlSite, normalizeWebsiteUrl, type CrawlResult } from "./website.js";
 import { SetupBackError, type WebSetup, type SetupNote } from "./setup-server.js";
@@ -83,6 +83,7 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
   let position = 0;
   let error = "";
   let completed: Result | undefined;
+  let reportedWebsite: string | undefined;
 
   function set(key: string, value: string | number | boolean) {
     if (values.get(key) !== value) {
@@ -139,19 +140,29 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
       if (flag("website") === undefined) ask("website", "Your website (Enter to skip)", undefined, (value) => value ? normalizeWebsiteUrl(value).href : "",
         [{ text: "Use your website to suggest business details. Leave blank to skip." }, { text: "Credentials stay on this machine. Files are saved only when you finish." }]);
       const website = flag("website") ?? text("website");
+      let url: URL | undefined;
       if (website) {
-        const url = normalizeWebsiteUrl(website);
+        try { url = normalizeWebsiteUrl(website); }
+        catch (e) {
+          if (reportedWebsite !== website) {
+            reportedWebsite = website;
+            ctx.log(`--website: ${(e as Error).message} ${WEBSITE_NOTES.carryOn}`);
+          }
+        }
+      }
+      if (url) {
+        const siteUrl = url;
         add("crawl", async () => {
-          crawlUrl = url.href;
+          crawlUrl = siteUrl.href;
           try {
-            crawl = await effect(`crawl:${url.href}`, () => (ctx.website?.crawl ?? crawlSite)(url));
+            crawl = await effect(`crawl:${siteUrl.href}`, () => (ctx.website?.crawl ?? crawlSite)(siteUrl));
             try { candidates = (ctx.website?.detect ?? detectLlm)(ctx.env); } catch { candidates = []; }
           } catch {
             crawl = undefined;
             candidates = [];
           }
-        }, [`Reading ${url.hostname}…`], false);
-        if (crawl && crawlUrl === url.href) {
+        }, [`Reading ${siteUrl.hostname}…`], false);
+        if (crawl && crawlUrl === siteUrl.href) {
           currentSite = { ...(crawl.vendor ? { vendor: crawl.vendor } : {}), bookable: [], ask: [], products: [], shop: false };
           if (crawl.pages.some((page) => page.text.trim()) || crawl.jsonLd.length) {
             const skip = candidates.length + 1;
