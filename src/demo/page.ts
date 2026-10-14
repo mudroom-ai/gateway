@@ -23,6 +23,11 @@ function servicePrompt(config: Config, base: string, serviceName: string): strin
   return `Book me a ${serviceName.toLowerCase()} tomorrow afternoon at ${config.name} (${base}).`;
 }
 
+/** For the ask-the-owner card: a question only a person can answer, so the agent leaves a message instead of booking. */
+export function askOwnerPrompt(config: Config, base: string): string {
+  return `Ask the owner of ${config.name} (${base}) whether they can groom a nervous 60 lb doodle, and tell me what they say.`;
+}
+
 const DAYS = [
   ["mon", "Monday"],
   ["tue", "Tuesday"],
@@ -58,7 +63,9 @@ function zoneLabel(config: Config, now: DateTime): string {
 const price = (cents: number, currency: string) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: cents % 100 ? 2 : 0 }).format(cents / 100);
 
-export function playgroundPage(config: Config, base: string, now: DateTime = DateTime.now()): string {
+/** `askOwner`: messages reach a person who replies in-band (two-way channel), so the page offers the ask-the-owner card. */
+export function playgroundPage(config: Config, base: string, opts: { askOwner?: boolean; now?: DateTime } = {}): string {
+  const now = opts.now ?? DateTime.now();
   const prompt = playgroundPrompt(config, base);
   const local = now.setZone(config.timezone);
   const today = DAYS[local.weekday - 1]![0];
@@ -72,6 +79,13 @@ export function playgroundPage(config: Config, base: string, now: DateTime = Dat
 </article>`,
     )
     .join("\n");
+  const ask = opts.askOwner
+    ? `<article class="card service ask">
+  <div class="service-head"><h3>Ask the owner</h3><span class="meta">Free</span></div>
+  <p>A question your agent can't answer from the menu? It leaves a message, a human owner types a reply, and your agent reads the answer back to you.</p>
+  <div class="service-foot"><span class="meta">Human reply · templated note if away 10 min</span><button type="button" class="button ghost small" data-copy="${esc(askOwnerPrompt(config, base))}">Copy agent prompt</button></div>
+</article>`
+    : "";
   const hours = DAYS.map(
     ([d, label]) => `<li${d === today ? ' class="today"' : ""}><span>${label}</span><span>${esc(spans(config.hours[d]))}</span></li>`,
   ).join("");
@@ -131,6 +145,7 @@ h2{margin:0;font-size:clamp(1.3rem,2vw,1.65rem);font-weight:500;letter-spacing:-
 h3{margin:0;font-size:1.05rem;font-weight:550;letter-spacing:-.02em}
 .price{font-size:1.05rem;font-weight:500;font-variant-numeric:tabular-nums}
 .service p{margin:0;flex:1;font-size:.925rem;line-height:1.55;color:var(--body-text)}
+.service.ask{grid-column:1/-1;background:var(--surface)}
 .service-foot{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding-top:.75rem;border-top:1px solid var(--border)}
 .meta{font-size:.8125rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .hours{padding:1.25rem 1.35rem}
@@ -229,6 +244,7 @@ dialog[open]{animation:pop 260ms cubic-bezier(.2,.9,.3,1.2)}
     <div class="shop">
       <div class="services">
 ${services}
+${ask}
       </div>
       <aside class="card hours" aria-label="Opening hours">
         <h3>Hours <span class="meta">${esc(zone)}</span></h3>

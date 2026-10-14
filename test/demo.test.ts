@@ -80,6 +80,7 @@ describe("demo mode over HTTP", () => {
   it("serves the playground page to browsers and markdown with the playground note to agents", async () => {
     const html = await (await fetch(base, { headers: { accept: "text/html" } })).text();
     expect(html).toContain("Playground");
+    expect(html).not.toContain("Ask the owner"); // no owner channel in this app
     expect(html).toContain(`at Paws &amp; Suds Dog Grooming (${base}) and ask`);
     expect(html).not.toContain("Start at");
     const md = await (await fetch(`${base}/llms.txt`)).text();
@@ -183,5 +184,13 @@ describe("owner away", () => {
     expect(r.data.messages.filter((m) => m.from === "owner").map((m) => m.text)).toEqual([OWNER_AWAY_TEXT]);
     expect(posted).toEqual([OWNER_AWAY_TEXT]);
     expect(handler).toBeUndefined(); // start() was never called: the sweep alone does it
+  });
+});
+
+describe("ask-the-owner card", () => {
+  it("is offered only when messages reach a person who replies", async () => {
+    const { playgroundPage } = await import("../src/demo/page.js");
+    expect(playgroundPage(config, "https://x.test", { askOwner: true })).toContain("Ask the owner of Paws &amp; Suds Dog Grooming (https://x.test)");
+    expect(playgroundPage(config, "https://x.test")).not.toContain("Ask the owner");
   });
 });

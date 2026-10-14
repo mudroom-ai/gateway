@@ -233,7 +233,7 @@ export function homeHandler(config: Config, connector: BookingConnector, publicU
     const base = baseUrl(req, publicUrl);
     const html = (req.get("accept") ?? "").includes("text/html");
     res.vary("Accept");
-    if (html && demo) return void res.type("html").send(playgroundPage(config, base));
+    if (html && demo) return void res.type("html").send(playgroundPage(config, base, { askOwner: messages === "two_way" }));
     const d = await discover(connector, messages, demo);
     if (html) res.type("html").send(homePage(config, base, d));
     else res.type("text/markdown; charset=utf-8").send(agentInstructions(config, base, d));
