@@ -28,14 +28,13 @@ const CUSTOMER = { name: "Ann Lee", phone: "+1 202 555 0199" };
 describe("classifyVendor", () => {
   it("reads the vendor from the user-agent, then the X-Agent-Name hint", () => {
     expect(classifyVendor("Mozilla/5.0 (compatible; Grok/1.0)")).toBe("grokbot");
-    // Only Muse and GrokBot are named; everyone else is "other".
-    expect(classifyVendor("Mozilla/5.0 AppleWebKit/537.36; compatible; ChatGPT-User/1.0; +https://openai.com/bot")).toBe("other");
-    expect(classifyVendor("Claude-User (claude-code/1.0; +https://support.anthropic.com/)", "Claude")).toBe("other");
+    // Only Muse and GrokBot exist: anyone not recognised as GrokBot is Muse.
+    expect(classifyVendor("Mozilla/5.0 AppleWebKit/537.36; compatible; ChatGPT-User/1.0; +https://openai.com/bot")).toBe("muse");
     expect(classifyVendor("curl/8.7.1", "Muse")).toBe("muse");
     expect(classifyVendor("python-requests/2.32", "GrokBot")).toBe("grokbot");
-    expect(classifyVendor("curl/8.7.1")).toBe("other");
-    expect(classifyVendor("curl/8.7.1", "Ann Lee's bot")).toBe("other");
-    expect(classifyVendor(undefined)).toBe("other");
+    expect(classifyVendor("curl/8.7.1")).toBe("muse");
+    expect(classifyVendor("curl/8.7.1", "Ann Lee's bot")).toBe("muse");
+    expect(classifyVendor(undefined)).toBe("muse");
   });
 });
 
@@ -68,7 +67,7 @@ describe("demo mode over HTTP", () => {
     const text = await res.text();
     const feed = JSON.parse(text) as { recent: { vendor: string; route: string; outcome: string }[]; bookings: { total: number; by_vendor: Record<string, number> }; today: { agents: number } };
     expect(feed.recent.map((r) => [r.vendor, r.route, r.outcome])).toEqual([
-      ["other", "cancel", "unknown_booking"],
+      ["muse", "cancel", "unknown_booking"],
       ["grokbot", "book", "ok"],
       ["muse", "quote", "ok"],
     ]);

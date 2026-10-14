@@ -291,8 +291,8 @@ ${services}
 
 <script>
 (function(){
-var NAMES={muse:"Muse",grokbot:"GrokBot",other:"Other agent"};
-var MARKS={muse:"M",grokbot:"G",other:"?"};
+var NAMES={muse:"Muse",grokbot:"GrokBot"};
+var MARKS={muse:"M",grokbot:"G"};
 var DID={services:"read the services",slots:"checked times",quote:"got a quote",book:"booked",cancel:"cancelled",reschedule:"rescheduled",message:"asked the owner"};
 var dlg=document.getElementById("welcome"),toast=document.getElementById("toast"),seen={},first=true,tt;
 function show(msg){toast.textContent=msg;toast.classList.add("show");clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove("show")},1800)}
@@ -328,9 +328,9 @@ function render(f){
   fb.replaceChildren();
   f.recent.forEach(function(i){
     var key=i.at+i.vendor+i.route,li=el("li",null,seen[key]||first?"":"fresh");seen[key]=1;
-    var ok=i.outcome==="ok",name=NAMES[i.vendor]||"Other agent",what=el("span",null,"what");
+    var ok=i.outcome==="ok",name=NAMES[i.vendor]||"Muse",what=el("span",null,"what");
     what.append(el("b",name)," "+(DID[i.route]||i.route));
-    li.append(el("span",MARKS[i.vendor]||"?","avatar"),what,el("span",ok?"ok":i.outcome.replace(/_/g," "),"tag "+(ok?"ok":"err")),el("time",ago(i.at)));
+    li.append(el("span",MARKS[i.vendor]||"M","avatar"),what,el("span",ok?"ok":i.outcome.replace(/_/g," "),"tag "+(ok?"ok":"err")),el("time",ago(i.at)));
     fb.appendChild(li);
   });
   first=false;
