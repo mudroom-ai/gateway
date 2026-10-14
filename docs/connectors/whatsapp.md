@@ -51,6 +51,7 @@ It cannot:
 - Carry **images, voice notes or documents** from the owner: those get one "text only" reply and are not passed on. Reactions from the owner are ignored.
 - Message **more than one** owner, or let anyone but `OWNER_PHONE` answer: messages from other numbers are dropped silently (logged once an hour per sender) and never answered, so the number cannot be used to spam strangers.
 - Bind a reply **by quote to a message older than about 7 days**: WhatsApp then sends no quote, and the reply counts as plain.
+- Guess at a quote it cannot place. A quote of a gateway notice, or of a follow-up sent before the gateway last restarted, gets one reply asking the owner to quote the agent's own message instead; it is never routed to whichever customer happens to be waiting.
 - **Message the customer.** Only the owner is ever written to.
 
 ## Limitations

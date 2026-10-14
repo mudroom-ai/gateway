@@ -37,6 +37,8 @@ const NOTICED_MAX = 500;
 const AUTH_CODES = new Set([190, 10]);
 /** Meta-side hiccups and rate limits the core should queue and retry. */
 const TRANSIENT_CODES = new Set([1, 2, 4, 368, 80007, 130429, 131048, 131056]);
+/** Sent once when the owner quoted a message the gateway cannot tie to a conversation. */
+export const UNKNOWN_QUOTE_NOTICE = "I could not tell which conversation this answers. Please swipe to reply on the agent's own message (the one that starts with \"New message\"), or send it without a quote when only one customer is waiting.";
 /** Free-form text refused: the owner has not written to the number in the last 24 hours. */
 export const WINDOW_CLOSED_CODE = 131047;
 
@@ -230,13 +232,17 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
     const sent_at_ms = Number.isFinite(ts) && ts > 0 ? Math.round(ts * 1000) : undefined;
     const quoted = typeof m.context?.id === "string" ? m.context.id : undefined;
     const base = { provider_msg_id: id, user_id: from, text, ...(sent_at_ms !== undefined ? { sent_at_ms } : {}) };
-    let outcome: Awaited<ReturnType<OwnerMessageHandler>> = "ignored";
+    let outcome: Awaited<ReturnType<OwnerMessageHandler>>;
     if (quoted) {
       // A quote of something this channel sent, or (after a restart) of an opener the core still knows by its id.
       outcome = await handler({ ...base, provider_ref: refs.get(quoted) ?? quoted });
+      // A quote the core cannot place (a notice, a follow-up from before a restart) is never guessed at: the owner
+      // named a conversation, and the one thread waiting now may be another customer's.
+      if (outcome === "ignored" && !refs.has(quoted)) await noticeOnce(id, UNKNOWN_QUOTE_NOTICE);
+    } else {
+      // A plain reply: the core matches it to the one thread awaiting the owner.
+      outcome = await handler(base);
     }
-    // A plain reply, or a quote of a message nobody knows: the core matches it to the one thread awaiting the owner.
-    if (outcome === "ignored") outcome = await handler(base);
     if (outcome.startsWith("rejected:")) await noticeOnce(id, rejectionNotice(outcome.slice("rejected:".length)));
   }
 

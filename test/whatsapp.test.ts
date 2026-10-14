@@ -203,14 +203,22 @@ describe("whatsappOwnerChannel: webhook", () => {
     ]);
   });
 
-  it("a plain reply has no provider_ref; a quote of an unknown message is tried by its id, then as a plain reply", async () => {
-    const { ch, handled, setAnswer } = meta();
+  it("a plain reply has no provider_ref; a quote of an unknown message is tried by its id and, if unknown to the core, answered with a notice, never routed as plain", async () => {
+    const { ch, handled, sends, setAnswer } = meta();
     expect((await ch.webhook.handle(delivery([text("wamid.in1", "Yes")]))).status).toBe(200);
     expect(handled).toEqual([{ provider_msg_id: "wamid.in1", user_id: OWNER_WA, text: "Yes", sent_at_ms: 1760000000000 }]);
     handled.length = 0;
     setAnswer("ignored");
+    // The owner quoted customer A's follow-up from before a restart; customer B may be the only one waiting now.
     await ch.webhook.handle(delivery([text("wamid.in2", "Yes", { context: { id: "wamid.forgotten" } })]));
-    expect(handled.map((m) => m.provider_ref)).toEqual(["wamid.forgotten", undefined]);
+    await ch.webhook.handle(delivery([text("wamid.in2", "Yes", { context: { id: "wamid.forgotten" } })])); // redelivery
+    expect(handled.map((m) => m.provider_ref)).toEqual(["wamid.forgotten", "wamid.forgotten"]);
+    expect(sends()).toHaveLength(1);
+    expect((sends()[0]!.text as { body: string }).body).toContain("could not tell which conversation");
+    // A quote the core does place (an opener it still knows after a restart) gets no notice.
+    setAnswer("accepted");
+    await ch.webhook.handle(delivery([text("wamid.in3", "Yes", { context: { id: "wamid.opener-from-before" } })]));
+    expect(sends()).toHaveLength(1);
   });
 
   it("ignores senders other than the owner, logging once, and never writes back to them", async () => {
