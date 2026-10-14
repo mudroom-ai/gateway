@@ -313,8 +313,18 @@ code { padding: .12em .3em; border: 1px solid var(--border); border-radius: 4px;
 .log a { text-underline-offset: 3px; }
 .log a:visited { color: var(--muted); }
 .history { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); }
-.history summary { cursor: pointer; width: fit-content; font-size: .875rem; font-weight: 500; letter-spacing: -.01em; }
+.history summary { display: flex; align-items: center; gap: .55rem; cursor: pointer; width: fit-content; font-size: .875rem; font-weight: 500; letter-spacing: -.01em; list-style: none; }
+.history summary::-webkit-details-marker { display: none; }
+.history summary::before { content: ""; width: .35rem; height: .35rem; margin-left: .1rem; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateX(-.1rem) rotate(-45deg); transition: transform 160ms ease; }
+.history[open] summary::before { transform: translateY(-.1rem) rotate(45deg); }
+.history summary:hover { color: var(--text); }
 .history .log { margin-top: .9rem; }
+/* Earlier notes stay readable but sit behind the current question. */
+.history .note-card { background: transparent; }
+.history .log strong,
+.history .instruction h2,
+.history .instruction-list strong,
+.history .instruction-fields dd { color: var(--body-text); }
 .hint { line-height: 1.5; }
 .keys { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; font-size: .8125rem; }
 kbd { padding: .1rem .3rem; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--body-text); font: inherit; }
@@ -332,16 +342,18 @@ input[type="text"], input[type="password"] { height: 3rem; }
 
 .file-name { color: var(--file-text); cursor: help; }
 
-.instruction h2 { margin: 0; color: var(--text); font-size: 1rem; font-weight: 550; line-height: 1.4; letter-spacing: -.02em; }
+.instruction h2 { margin: 0; color: var(--text); font-size: 1.125rem; font-weight: 600; line-height: 1.4; letter-spacing: -.02em; }
 .instruction h2 + p { margin-top: .45rem; }
-.instruction-list { margin: .9rem 0 0; padding: .15rem 0 0 1.35rem; border-top: 1px solid var(--border); display: grid; gap: 0; }
-.instruction-list li { padding: .72rem 0 .72rem .3rem; border-bottom: 1px solid var(--border); color: var(--text); font-size: 1rem; line-height: 1.5; }
+/* Numbers sit inside each row so row rules run the full card width, like the heading rule. */
+.instruction-list { margin: .9rem 0 0; padding: .15rem 0 0; border-top: 1px solid var(--border); display: grid; gap: 0; min-width: 0; list-style: none; counter-reset: step; }
+.instruction-list li { position: relative; min-width: 0; padding: .72rem 0 .72rem 1.65rem; border-bottom: 1px solid var(--border); color: var(--text); font-size: 1rem; line-height: 1.5; counter-increment: step; }
 .instruction-list li:last-child { border-bottom: 0; padding-bottom: 0; }
-.instruction-list li::marker { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
-.instruction-list strong { display: block; color: var(--text); font-weight: 550; text-wrap: pretty; line-height: 1.45; }
+.instruction-list li::before { content: counter(step) "."; position: absolute; top: .72rem; left: 0; color: var(--muted); font-size: .875rem; line-height: 1.45rem; font-variant-numeric: tabular-nums; }
+.instruction-list strong { display: block; color: var(--text); font-weight: 500; text-wrap: pretty; line-height: 1.45; }
 .instruction-list li p { margin-top: .25rem; color: var(--muted); font-size: .9375rem; line-height: 1.5; }
 .instruction-steps { gap: 1.15rem; padding-top: .95rem; }
-.instruction-steps li { border-bottom: 0; padding: 0 0 0 .3rem; }
+.instruction-steps li { border-bottom: 0; padding: 0 0 0 1.65rem; }
+.instruction-steps li::before { top: 0; }
 .instruction-steps li,
 .instruction-steps .step-copy { overflow-wrap: break-word; word-break: normal; white-space: normal; }
 .instruction-list li p.step-copy { margin-top: .7rem; color: var(--body-text); line-height: 1.65; text-wrap: pretty; }
@@ -349,6 +361,7 @@ input[type="text"], input[type="password"] { height: 3rem; }
 .instruction-steps .command {
   box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   margin: .7rem 0 0;
   max-width: 100%;
   padding: .7rem .85rem;
@@ -368,6 +381,8 @@ input[type="text"], input[type="password"] { height: 3rem; }
   font-size: .8125rem;
   line-height: 1.5;
   display: block;
+  max-width: 100%;
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -376,10 +391,11 @@ input[type="text"], input[type="password"] { height: 3rem; }
 .instruction-links { display: flex; flex-wrap: wrap; gap: .15rem 1.15rem; margin: .85rem 0 0; padding-top: .35rem; border-top: 1px solid var(--border); }
 .instruction-links a,
 .instruction-links a:visited { display: inline-flex; align-items: center; min-height: 44px; color: var(--text); font-size: .9375rem; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.instruction-fields { display: grid; grid-template-columns: minmax(8.5rem, 11rem) minmax(0, 1fr); column-gap: 1.15rem; row-gap: 0; margin: .9rem 0 0; padding-top: .15rem; border-top: 1px solid var(--border); font-size: 1rem; line-height: 1.5; }
+.instruction-fields { display: grid; grid-template-columns: minmax(8.5rem, 11rem) minmax(0, 1fr); column-gap: 0; row-gap: 0; margin: .9rem 0 0; padding-top: .15rem; border-top: 1px solid var(--border); font-size: 1rem; line-height: 1.5; }
 .instruction-fields > * { padding-block: .7rem; border-bottom: 1px solid var(--border); }
 .instruction-fields > :nth-last-child(-n + 2) { border-bottom: 0; padding-bottom: 0; }
-.instruction-fields dt { color: var(--muted); }
+/* Spacing lives on the term, not a column gap, so each row rule is unbroken. */
+.instruction-fields dt { padding-right: 1.15rem; color: var(--muted); }
 .instruction-fields dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 @media (max-width: 480px) {
   .note-card { padding: 1rem; }

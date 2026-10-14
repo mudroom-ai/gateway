@@ -100,7 +100,7 @@ describe("wizard guidance", () => {
     ].join("\n"));
 
     const statusCard = log.children[0] as Element;
-    expect(statusCard.className).toBe("note-card");
+    expect(statusCard.className).toBe("note-line");
     const status = statusCard.children[0] as Element;
     expect(status.tag).toBe("p");
     expect(textOf(status)).toContain("Ready to save");
@@ -149,12 +149,14 @@ describe("wizard guidance", () => {
     expect(elements[1]!.title).toBe("/private/tmp/config.json");
   });
 
-  it("gives each setup note its own card", () => {
+  it("gives each structured note its own card and keeps one-line notes as text", () => {
     const { appendLog, appendNote, log } = renderer();
     appendLog("Found /private/tmp/config.json and /private/tmp/.env.");
     appendNote({ title: "Your setup", fields: [{ label: "Business", value: "Foyer" }] });
-    expect((log.children[0] as Element).className).toBe("note-card");
+    appendLog("Line one.\nLine two.");
+    expect((log.children[0] as Element).className).toBe("note-line");
     expect(((log.children[0] as Element).children[0] as Element).tag).toBe("p");
+    expect((log.children[2] as Element).className).toBe("note-card");
     expect((log.children[1] as Element).className).toBe("instruction note-card");
     expect((log.children[1] as Element).children.some((child) => child instanceof Element && child.className === "instruction-fields")).toBe(true);
   });

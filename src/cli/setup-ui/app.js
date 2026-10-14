@@ -83,6 +83,8 @@ function appendLines(text) {
     card.append(p);
   }
   if (!card.childElementCount) return;
+  // A one-line status reads as text; cards are for notes with structure.
+  if (card.childElementCount === 1) card.className = "note-line";
   logEl.append(card);
 }
 
