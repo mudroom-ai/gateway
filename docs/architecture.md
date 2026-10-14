@@ -73,6 +73,6 @@ The channel recovers missed replies. The core supplies open thread references an
 
 ## No MCP
 
-The gateway uses plain HTTP because its target agents (Meta's Muse, Grok, and ChatGPT agent mode) cannot install an MCP server. Agents discover the API through `/llms.txt`.
+The gateway uses plain HTTP because its target agents (Meta's Muse and Grok) cannot install an MCP server. Agents discover the API through `/llms.txt`.
 
 `src/middleware/hosts.ts` provides DNS-rebinding protection through `Host` validation and `ALLOWED_HOSTS`. It replaces the MCP SDK's `createMcpExpressApp` validation and fails closed for specific non-loopback bind addresses.

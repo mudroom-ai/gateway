@@ -775,9 +775,10 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       [
         ["Go to your gateway folder", cmd(`cd ${dir}`)],
         [
-          `Open a tunnel so Claude.ai or ChatGPT can reach it ${style.dim("(skip if you only call it locally)")}`,
+          `Open a tunnel so Muse or Grok can reach it ${style.dim("(skip if you only call it locally)")}`,
           cmd(`cloudflared tunnel --url http://localhost:${port}`),
           note("install: brew install cloudflared, or https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"),
+          note("ChatGPT and Claude.ai don't work through a tunnel; host the gateway on a real domain for them (docs/deploy.md)"),
           "     It prints https://<tunnel-host>.trycloudflare.com. Add that host to .env:",
           cmd("ALLOWED_HOSTS=<tunnel-host>.trycloudflare.com,localhost,127.0.0.1"),
         ],
