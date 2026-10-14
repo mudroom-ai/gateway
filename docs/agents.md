@@ -116,6 +116,8 @@ The owner does not need to close threads manually. Agent closure tells the owner
 
 A follow-up to a closed thread, or one with 20 agent messages, returns `thread_closed`; start a new thread.
 
+A new `leave_message` for the same phone or email continues the owner's conversation: when the customer's latest thread was answered, or closed within `limits.thread_close_after_reply_hours`, the message is posted into the same Slack thread (or WhatsApp conversation). It is still a new thread with its own `thread_id`, `read_token` and messages, so earlier replies are never shown to the new caller. An answered thread that was still open closes as superseded. While the latest thread still awaits the owner, a new channel thread opens as before.
+
 </details>
 
 <details>

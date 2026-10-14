@@ -511,7 +511,10 @@ export class Store {
   }
 
   getThreadByProviderRef(providerRef: string): ThreadRow | null {
-    const r = this.db.prepare("SELECT * FROM threads WHERE provider_ref = ?").get(providerRef) as Raw | undefined;
+    // Several threads can share one channel thread (a returning customer continues it); the newest owns replies.
+    const r = this.db.prepare("SELECT * FROM threads WHERE provider_ref = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(providerRef) as
+      | Raw
+      | undefined;
     return r ? toThread(r) : null;
   }
 
@@ -553,6 +556,18 @@ export class Store {
     const want = new Set(keys);
     const rows = this.db.prepare("SELECT * FROM threads WHERE merchant_id = ? AND state != 'closed'").all(merchantId) as Raw[];
     return rows.map(toThread).filter((t) => t.contact_keys.some((k) => want.has(k)));
+  }
+
+  /** The newest two-way thread of this merchant that shares any of `keys`, reached the channel and changed at or after `sinceMs`. */
+  latestThreadForContact(merchantId: string, keys: string[], sinceMs: number): ThreadRow | null {
+    const want = new Set(keys);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM threads WHERE merchant_id = ? AND mode = 'two_way' AND provider_ref IS NOT NULL AND updated_at_ms >= ?
+         ORDER BY created_at DESC, rowid DESC`,
+      )
+      .all(merchantId, sinceMs) as Raw[];
+    return rows.map(toThread).find((t) => t.contact_keys.some((k) => want.has(k))) ?? null;
   }
 
   /** Two-way threads of this merchant waiting for the owner whose opener reached the channel (provider_ref set), oldest first. */

@@ -406,6 +406,47 @@ describe("leave_message", () => {
   });
 });
 
+describe("returning customer", () => {
+  it("after the agent closes, the next message goes into the same channel thread as a new, private thread", async () => {
+    const { ops, channel } = setup();
+    const a = await leaveOk(ops, { message: "Do you take large dogs?" });
+    await ops.onOwnerMessage({ provider_ref: "ts.1", provider_msg_id: "o1", user_id: "U", text: "Yes" });
+    await ops.closeThread({ thread_id: a.thread_id, read_token: a.read_token });
+    const b = await leaveOk(ops, { message: "Can I bring my other dog?" });
+    expect(b.thread_id).not.toBe(a.thread_id);
+    expect(channel.opened).toHaveLength(1);
+    expect(channel.posts.at(-1)).toEqual({ ref: "ts.1", text: expect.stringContaining("Can I bring my other dog?") });
+    // The new caller sees only its own message, never the earlier answer.
+    expect(b.messages.map((m) => m.text)).toEqual(["Can I bring my other dog?"]);
+    expect(await ops.onOwnerMessage({ provider_ref: "ts.1", provider_msg_id: "o2", user_id: "U", text: "Sure" })).toBe("accepted");
+    const g = await ops.getThread({ thread_id: b.thread_id, read_token: b.read_token });
+    expect(g.ok && g.data).toMatchObject({ status: "answered", messages: [{ from: "agent" }, { from: "owner", text: "Sure" }] });
+  });
+
+  it("an answered thread left open is superseded and closed without a notice", async () => {
+    const { ops, channel } = setup();
+    const a = await leaveOk(ops);
+    await ops.onOwnerMessage({ provider_ref: "ts.1", provider_msg_id: "o1", user_id: "U", text: "No cats" });
+    await leaveOk(ops, { message: "What about rabbits?" });
+    const g = await ops.getThread({ thread_id: a.thread_id, read_token: a.read_token });
+    expect(g.ok && g.data.status).toBe("closed");
+    expect(channel.opened).toHaveLength(1);
+    expect(channel.posts.map((p) => p.text).join("\n")).not.toContain(CLOSE_NOTICE);
+  });
+
+  it("opens a new channel thread while the last one awaits the owner, or once the reply window has passed", async () => {
+    const { ops, channel, advance } = setup();
+    const a = await leaveOk(ops);
+    await leaveOk(ops, { message: "Also, rabbits?" });
+    expect(channel.opened).toHaveLength(2);
+    await ops.onOwnerMessage({ provider_ref: "ts.2", provider_msg_id: "o1", user_id: "U", text: "No" });
+    await ops.closeThread({ thread_id: a.thread_id, read_token: a.read_token });
+    advance(25 * 3_600_000);
+    await leaveOk(ops, { message: "Back again" });
+    expect(channel.opened).toHaveLength(3);
+  });
+});
+
 describe("get_thread", () => {
   it("wrong, missing and unknown all return the identical unknown_thread body", async () => {
     const { ops } = setup();
