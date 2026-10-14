@@ -7,6 +7,7 @@
 //   - an owner thread unanswered for 10 minutes gets a templated owner reply (messages.ts ownerAway),
 //   - bookings and messages have extra per-IP and per-vendor caps (src/demo/limits.ts).
 
+import { fileURLToPath } from "node:url";
 import type { Express, RequestHandler, Response } from "express";
 import type { BookingConnector } from "../connectors/types.js";
 import type { GatewayError } from "../errors.js";
@@ -56,8 +57,14 @@ export function demoWiring(deps: {
   };
 }
 
-/** GET /demo/feed: the playground's public JSON. Never cached, so the page sees new rows at once. */
+/** Geist, already shipped for the setup wizard (the build copies src/cli/setup-ui to dist/cli/setup-ui). */
+const GEIST = fileURLToPath(new URL("../cli/setup-ui/geist-latin.woff2", import.meta.url));
+
+/** GET /demo/feed: the playground's public JSON, never cached so the page sees new rows at once. GET /demo/geist.woff2: the page's font. */
 export function feedRoute(app: Express, traffic: AgentTraffic, limit: RequestHandler): void {
+  app.get("/demo/geist.woff2", (_req, res) => {
+    res.set("Cache-Control", "public, max-age=604800, immutable").type("font/woff2").sendFile(GEIST);
+  });
   app.get("/demo/feed", limit, (_req, res) => {
     res.set("Cache-Control", "no-store").json(traffic.feed());
   });
