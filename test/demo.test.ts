@@ -27,11 +27,12 @@ const CUSTOMER = { name: "Ann Lee", phone: "+1 202 555 0199" };
 
 describe("classifyVendor", () => {
   it("reads the vendor from the user-agent, then the X-Agent-Name hint", () => {
-    expect(classifyVendor("Mozilla/5.0 AppleWebKit/537.36; compatible; ChatGPT-User/1.0; +https://openai.com/bot")).toBe("openai");
-    expect(classifyVendor("Claude-User (claude-code/1.0; +https://support.anthropic.com/)")).toBe("claude");
-    expect(classifyVendor("Mozilla/5.0 (compatible; Grok/1.0)")).toBe("grok");
+    expect(classifyVendor("Mozilla/5.0 (compatible; Grok/1.0)")).toBe("grokbot");
+    // Only Muse and GrokBot are named; everyone else is "other".
+    expect(classifyVendor("Mozilla/5.0 AppleWebKit/537.36; compatible; ChatGPT-User/1.0; +https://openai.com/bot")).toBe("other");
+    expect(classifyVendor("Claude-User (claude-code/1.0; +https://support.anthropic.com/)", "Claude")).toBe("other");
     expect(classifyVendor("curl/8.7.1", "Muse")).toBe("muse");
-    expect(classifyVendor("python-requests/2.32", "grok 4")).toBe("grok");
+    expect(classifyVendor("python-requests/2.32", "GrokBot")).toBe("grokbot");
     expect(classifyVendor("curl/8.7.1")).toBe("other");
     expect(classifyVendor("curl/8.7.1", "Ann Lee's bot")).toBe("other");
     expect(classifyVendor(undefined)).toBe("other");
@@ -58,7 +59,7 @@ describe("demo mode over HTTP", () => {
     const day = DateTime.now().setZone(config.timezone).plus({ days: 2 }).startOf("day");
     const window = { start: day.set({ hour: 10 }).toISO()!, end: day.set({ hour: 11 }).toISO()! };
     const q = (await (await post("/api/quote", { service_id: "bath", window }, { "x-agent-name": "Muse" })).json()) as { quote_id: string };
-    const b = await post("/api/book", { quote_id: q.quote_id, customer: { ...CUSTOMER, notes: "big dog" }, idempotency_key: "k1" }, { "user-agent": "ChatGPT-User/1.0" });
+    const b = await post("/api/book", { quote_id: q.quote_id, customer: { ...CUSTOMER, notes: "big dog" }, idempotency_key: "k1" }, { "x-agent-name": "GrokBot" });
     expect(b.status).toBe(201);
     expect([...fake.events.values()][0]!.title).toMatch(/^\[demo\] Bath and brush - Ann Lee$/);
     await post("/api/cancel", { booking_id: "b_nope", phone: CUSTOMER.phone }, { "user-agent": "Claude-User" });
@@ -67,12 +68,12 @@ describe("demo mode over HTTP", () => {
     const text = await res.text();
     const feed = JSON.parse(text) as { recent: { vendor: string; route: string; outcome: string }[]; bookings: { total: number; by_vendor: Record<string, number> }; today: { agents: number } };
     expect(feed.recent.map((r) => [r.vendor, r.route, r.outcome])).toEqual([
-      ["claude", "cancel", "unknown_booking"],
-      ["openai", "book", "ok"],
+      ["other", "cancel", "unknown_booking"],
+      ["grokbot", "book", "ok"],
       ["muse", "quote", "ok"],
     ]);
-    expect(feed.bookings).toMatchObject({ total: 1, by_vendor: { openai: 1 } });
-    expect(feed.today.agents).toBe(3);
+    expect(feed.bookings).toMatchObject({ total: 1, by_vendor: { grokbot: 1 } });
+    expect(feed.today.agents).toBe(2); // quote and book share IP and user-agent
     for (const secret of ["Ann", "555", "0199", "big dog", "b_nope", "127.0.0.1"]) expect(text).not.toContain(secret);
   });
 

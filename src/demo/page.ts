@@ -277,7 +277,7 @@ ${services}
     <p class="lede">This shop takes bookings from AI agents, and a human owner answers their questions in Slack. Try it with yours.</p>
     <ol>
       <li><div><b>Copy this prompt</b><div class="prompt" id="prompt">${esc(prompt)}</div></div></li>
-      <li><div><b>Paste it into your agent</b><div class="chips"><span class="chip">Muse</span><span class="chip">Grok</span><span class="chip">ChatGPT</span><span class="chip">Claude</span></div></div></li>
+      <li><div><b>Paste it into your agent</b><div class="chips"><span class="chip">Muse</span><span class="chip">GrokBot</span></div></div></li>
       <li><div><b>Watch it happen</b><br>Its requests show up under Live activity as they happen.</div></li>
     </ol>
     <p class="note">This is a playground. Bookings land in a real calendar, then cancel themselves after ${DEMO_BOOKING_TTL_MIN} minutes. If the owner is away from the desk, a templated reply says so.</p>
@@ -291,8 +291,8 @@ ${services}
 
 <script>
 (function(){
-var NAMES={muse:"Muse",grok:"Grok",openai:"ChatGPT",claude:"Claude",other:"Other agent"};
-var MARKS={muse:"M",grok:"X",openai:"O",claude:"A",other:"?"};
+var NAMES={muse:"Muse",grokbot:"GrokBot",other:"Other agent"};
+var MARKS={muse:"M",grokbot:"G",other:"?"};
 var DID={services:"read the services",slots:"checked times",quote:"got a quote",book:"booked",cancel:"cancelled",reschedule:"rescheduled",message:"asked the owner"};
 var dlg=document.getElementById("welcome"),toast=document.getElementById("toast"),seen={},first=true,tt;
 function show(msg){toast.textContent=msg;toast.classList.add("show");clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove("show")},1800)}

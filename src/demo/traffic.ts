@@ -10,7 +10,7 @@ import type { NextFunction, Request, Response } from "express";
 import { DateTime } from "luxon";
 import { clientIp, ipBucket, type ClientIpOptions } from "../middleware/ratelimit.js";
 import type { Store } from "../store/sqlite.js";
-import { classifyVendor, VENDORS, type Vendor } from "./vendor.js";
+import { classifyVendor, feedVendor, VENDORS, type Vendor } from "./vendor.js";
 
 export const ROUTE_KINDS = ["services", "slots", "quote", "book", "cancel", "reschedule", "message"] as const;
 export type RouteKind = (typeof ROUTE_KINDS)[number];
@@ -123,7 +123,7 @@ export class AgentTraffic {
     const weekStart = now - 7 * 86_400_000;
     const db = this.store.db;
     const recent = (db.prepare("SELECT vendor, route, outcome, at_ms FROM agent_requests ORDER BY id DESC LIMIT 10").all() as Record<string, unknown>[]).map(
-      (r): FeedItem => ({ vendor: r.vendor as Vendor, route: r.route as RouteKind, outcome: r.outcome as string, at: new Date(Number(r.at_ms)).toISOString() }),
+      (r): FeedItem => ({ vendor: feedVendor(r.vendor as string), route: r.route as RouteKind, outcome: r.outcome as string, at: new Date(Number(r.at_ms)).toISOString() }),
     );
     const span = (since: number) => {
       const rows = db.prepare("SELECT vendor, COUNT(*) AS n FROM agent_requests WHERE at_ms >= ? GROUP BY vendor").all(since) as { vendor: Vendor; n: number }[];
@@ -146,6 +146,6 @@ export class AgentTraffic {
 
 function byVendor(rows: { vendor: Vendor; n: number }[]): Record<Vendor, number> {
   const out = Object.fromEntries(VENDORS.map((v) => [v, 0])) as Record<Vendor, number>;
-  for (const r of rows) if (r.vendor in out) out[r.vendor] += Number(r.n);
+  for (const r of rows) out[feedVendor(r.vendor)] += Number(r.n);
   return out;
 }

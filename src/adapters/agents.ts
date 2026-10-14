@@ -43,7 +43,7 @@ function playgroundNote(d: Discovery): string {
   const away = d.messages === "two_way" ? " If the owner does not answer a message within 10 minutes, a templated reply says they are away." : "";
   return `## This is a playground
 
-This business is a public demo. Bookings are real calendar events, but they cancel themselves 60 minutes after they are made.${away} Please send the header \`X-Agent-Name\` with your product's name (for example \`X-Agent-Name: Muse\`, \`Grok\`, \`ChatGPT\` or \`Claude\`) on every request: the playground counts agents by vendor, and its public feed never shows names, contact details or messages.
+This business is a public demo. Bookings are real calendar events, but they cancel themselves 60 minutes after they are made.${away} Please send the header \`X-Agent-Name\` with your product's name (\`X-Agent-Name: Muse\` or \`X-Agent-Name: GrokBot\`) on every request: the playground counts agents by vendor, and its public feed never shows names, contact details or messages.
 
 `;
 }
