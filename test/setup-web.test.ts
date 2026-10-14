@@ -130,7 +130,7 @@ describe("browser setup", () => {
       log: (m) => logs.push(m),
       startWebSetup: async (opts) => {
         const session = await startSetupServer({ openUrl: opts.openUrl, open: false, exitOnEnter: false });
-        void driveSetup(session.url, ANSWERS).catch((err) => {
+        void driveSetup(session.url, [...ANSWERS.map((value) => value === "Not yet, finish later" ? "Finish later" : value), ""]).catch((err) => {
           driveError = err;
           return session.close();
         });

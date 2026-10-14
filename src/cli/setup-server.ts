@@ -1,5 +1,6 @@
 // Browser setup for `npm run init`. A page on 127.0.0.1 implements Prompter, so
-// runInit still decides every question, validates it, and writes the files.
+// The browser step engine chooses the questions; runInit shares file writing
+// and connector checks with terminal setup.
 // The token in the URL is the only way to reach the page; nothing else on the
 // machine should be able to answer the wizard by guessing a port.
 
@@ -11,17 +12,29 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { openBrowser } from "./guide.js";
 import type { Prompter } from "./init.js";
+import { timeZones, type TimeZoneSource } from "./time-zones.js";
 import type { PickItem } from "./picker.js";
+
+/** Shared presentation for concise instructions on every browser step. */
+export type SetupNote = string | {
+  title?: string;
+  text?: string;
+  items?: { label: string; detail?: string }[];
+  links?: { label: string; href: string }[];
+  fields?: { label: string; value: string }[];
+};
 
 export interface SetupStep {
   id: string;
-  kind: "ask" | "confirm" | "choose" | "done";
+  kind: "ask" | "confirm" | "choose" | "timezone" | "done";
   question?: string;
   /** Ask: the value an empty answer keeps. Omitted when it must not be shown. */
   def?: string;
   /** Ask: text to show in place of `def` (a secret stays out of the page). */
   shown?: string;
   secret?: boolean;
+  /** Source of the suggested time zone. Device suggestions use browser detection. */
+  zoneSource?: TimeZoneSource;
   items?: PickItem[];
   description?: string[];
   /** Choose: the pre-selected row. */
@@ -30,6 +43,8 @@ export interface SetupStep {
   cancel?: number;
   /** Done: false when the wizard stopped with an error. */
   ok?: boolean;
+  /** Whether an earlier answer can still be edited. */
+  canBack?: boolean;
 }
 
 export interface WebSetup {
@@ -39,6 +54,9 @@ export interface WebSetup {
   markDone(ok: boolean): void;
   waitForExit(): Promise<void>;
   close(): Promise<void>;
+  /** Browser engine controls navigation and current instructions. */
+  setCanBack?(available: boolean): void;
+  setContext?(lines: SetupNote[]): void;
 }
 
 export interface SetupServerOptions {
@@ -50,6 +68,8 @@ export interface SetupServerOptions {
   exitOnEnter?: boolean;
   /** Directory of index.html, app.css and app.js. Default: beside this module. */
   uiDir?: string;
+  /** The caller handles Back navigation when SetupBackError is thrown. */
+  allowBack?: boolean;
 }
 
 const FILES: Record<string, { name: string; type: string }> = {
@@ -57,7 +77,13 @@ const FILES: Record<string, { name: string; type: string }> = {
   "index.html": { name: "index.html", type: "text/html; charset=utf-8" },
   "app.css": { name: "app.css", type: "text/css; charset=utf-8" },
   "app.js": { name: "app.js", type: "text/javascript; charset=utf-8" },
+  "theme.js": { name: "theme.js", type: "text/javascript; charset=utf-8" },
+  "geist-latin.woff2": { name: "geist-latin.woff2", type: "font/woff2" },
 };
+
+export class SetupBackError extends Error {
+  constructor() { super("Return to an earlier setup question."); }
+}
 
 const MAX_BODY = 64 * 1024;
 const MAX_LOGS = 500;
@@ -109,9 +135,11 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
   const token = randomBytes(32).toString("base64url");
   const uiDir = opts.uiDir ?? fileURLToPath(new URL("./setup-ui/", import.meta.url));
   const logs: string[] = [];
+  let context: SetupNote[] = [];
   const clients = new Set<ServerResponse>();
   let current: SetupStep | undefined;
   let seq = 0;
+  let canBack = false;
   let pending: { id: string; resolve: (value: string) => void; reject: (err: Error) => void } | undefined;
   let exitResolve: (() => void) | undefined;
   let exited = false;
@@ -139,7 +167,7 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
   const request = (step: Omit<SetupStep, "id">): Promise<string> => {
     if (pending) return Promise.reject(new Error("setup page already has a question open"));
     const id = String(++seq);
-    const full: SetupStep = { ...step, id };
+    const full: SetupStep = { ...step, id, canBack: !!opts.allowBack && canBack };
     current = full;
     return new Promise<string>((resolve, reject) => {
       pending = { id, resolve, reject };
@@ -149,7 +177,7 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
 
   const prompter: Prompter = {
     async ask(q, def, shown) {
-      const masked = shown === "from .env";
+      const masked = shown === "from .env" || shown === "Previously entered; leave blank to keep it";
       const value = (await request({
         kind: "ask",
         question: q,
@@ -158,8 +186,8 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
       })).trim();
       return value || def || "";
     },
-    async confirm(q) {
-      return (await request({ kind: "confirm", question: q })) === "yes";
+    async confirm(q, def = false) {
+      return (await request({ kind: "confirm", question: q, def: def ? "yes" : "no" })) === "yes";
     },
     async choose(q, items, def = 0, description, cancel) {
       const value = await request({
@@ -173,6 +201,9 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
       const n = Number(value);
       if (!Number.isInteger(n) || n < 0 || n >= items.length) throw new Error(`invalid choice "${value}"`);
       return n;
+    },
+    async timeZone(suggested, source) {
+      return (await request({ kind: "timezone", question: "Time zone", def: suggested, zoneSource: source })).trim() || suggested;
     },
     async secret(q) {
       return (await request({ kind: "ask", question: q, secret: true })).trim();
@@ -226,6 +257,11 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
       end(res, 404);
       return;
     }
+    if (req.method === "GET" && path === "timezones") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      res.end(JSON.stringify(timeZones));
+      return;
+    }
     if (req.method === "GET" && path === "events") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -234,11 +270,22 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
         "X-Content-Type-Options": "nosniff",
       });
       sendEvent(res, "hello", {});
+      if (context.length) sendEvent(res, "context", { lines: context });
       for (const text of logs) sendEvent(res, "log", { text });
       if (current) sendEvent(res, "step", current);
       clients.add(res);
       res.on("error", () => clients.delete(res));
       req.on("close", () => clients.delete(res));
+      return;
+    }
+    if (req.method === "POST" && path === "back") {
+      const body = JSON.parse(await readBody(req)) as { id?: unknown };
+      if (!opts.allowBack || !canBack || !pending || body.id !== pending.id) {
+        end(res, 409, "that question cannot go back");
+        return;
+      }
+      failPending(new SetupBackError());
+      end(res, 204);
       return;
     }
     if (req.method === "POST" && path === "answer") {
@@ -308,6 +355,12 @@ export function startSetupServer(opts: SetupServerOptions = {}): Promise<WebSetu
       resolve({
         url,
         prompter,
+        setCanBack(available) { canBack = available; },
+        setContext(lines) {
+          logs.length = 0;
+          context = lines.map((line) => typeof line === "string" ? stripAnsi(line) : line);
+          broadcast("context", { lines: context });
+        },
         pushLog,
         markDone,
         async waitForExit() {

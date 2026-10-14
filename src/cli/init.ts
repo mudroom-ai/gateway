@@ -61,6 +61,8 @@ import { pick, style, type PickItem } from "./picker.js";
 import { askSetupMode } from "./setup-mode.js";
 import { startSetupServer, type WebSetup } from "./setup-server.js";
 import { cleanLine } from "./profile.js";
+import { collectWebSetup } from "./setup-flow.js";
+import { selectTerminalTimeZone, type TimeZoneSource } from "./time-zones.js";
 import { readSecret } from "./secret.js";
 
 export { READY_ITEMS } from "./guide.js";
@@ -97,7 +99,7 @@ export const GOAL_ITEMS: PickItem[] = [
   { emoji: "🕒", label: "Book appointments" },
   { emoji: "💬", label: "Book appointments and message me" },
 ];
-const GOAL_DESCRIPTION = [
+export const GOAL_DESCRIPTION = [
   "  Book appointments: agents find times, quote, book, cancel and reschedule",
   "  ...and message me: agents also leave you a message you answer in Slack, or you get a text per booking",
 ];
@@ -108,7 +110,7 @@ export const EXISTING_ITEMS: PickItem[] = [
   { emoji: "✏️", label: "Review and update" },
   { emoji: "🧹", label: "Start over" },
 ];
-const EXISTING_DESCRIPTION = [
+export const EXISTING_DESCRIPTION = [
   "  Keep it as it is: change nothing and exit",
   "  Review and update: go through the questions with your saved answers as the defaults",
   "  Start over: ignore the saved answers; config.json and .env are replaced when the wizard finishes",
@@ -216,7 +218,7 @@ export function parsePriceCents(raw: string): number {
   return Math.round(Number(v) * 100);
 }
 
-function parseIntIn(raw: string, what: string, min: number, max: number): number {
+export function parseIntIn(raw: string, what: string, min: number, max: number): number {
   const v = raw.trim();
   if (!/^\d+$/.test(v) || Number(v) < min || Number(v) > max) throw new Error(`invalid ${what} "${raw}" (whole number ${min}-${max})`);
   return Number(v);
@@ -409,10 +411,10 @@ const WIZARD_KEYS: readonly string[] = [...BACKEND_KEYS, "PORT"];
  * every booking-system and owner-channel key, plus the agents' bearer keys. Not WIZARD_KEYS,
  * which decides what a resume carries over in .env.
  */
-const CHILD_SECRET_KEYS: readonly string[] = [...BACKEND_KEYS, "API_KEYS"];
+export const CHILD_SECRET_KEYS: readonly string[] = [...BACKEND_KEYS, "API_KEYS"];
 
 /** For the website step: true only when parseHours reads the spec and the config schema accepts the result. */
-const validHoursSpec = (spec: string): boolean => {
+export const validHoursSpec = (spec: string): boolean => {
   try {
     return HoursSchema.safeParse(parseHours(spec)).success;
   } catch {
@@ -555,7 +557,7 @@ export type SquareCheckFactory = (opts: { accessToken: string; locationId: strin
 const defaultSquareFactory: SquareCheckFactory = (o) => new SquareConnector(o);
 
 /** Run the OAuth dance: listener up, link out, code in, tokens back. */
-async function squareAuthorize(app: { appId: string; appSecret: string; env: SquareEnv }, port: number, oauth: SquareOAuth, log: (m: string) => void): Promise<SquareTokens> {
+export async function squareAuthorize(app: { appId: string; appSecret: string; env: SquareEnv }, port: number, oauth: SquareOAuth, log: (m: string) => void): Promise<SquareTokens> {
   const state = newState();
   const url = authorizeUrl(app, state);
   const pending = oauth.waitForCallback(port, state);
@@ -576,11 +578,12 @@ async function squareAuthorize(app: { appId: string; appSecret: string; env: Squ
 export interface Prompter {
   /** `shown` replaces the default in the prompt (for secrets). */
   ask(q: string, def?: string, shown?: string): Promise<string>;
-  confirm(q: string): Promise<boolean>;
+  confirm(q: string, def?: boolean): Promise<boolean>;
   /** Pick one of `items`; resolves with its index. `def` is pre-selected and is the answer to Enter, and to ESC unless `cancel` names the row ESC answers with. */
   choose(q: string, items: PickItem[], def?: number, description?: string[], cancel?: number): Promise<number>;
   /** Masked input for a secret that is used once and not saved; "" when skipped (or when there is no terminal to hide it on). */
   secret(q: string): Promise<string>;
+  timeZone?(suggested: string, source: TimeZoneSource): Promise<string>;
   close(): void;
 }
 
@@ -611,6 +614,7 @@ function ttyPrompter(): Prompter {
       console.log(`${style.question(q)}${q.endsWith("?") ? "" : ":"} ${style.answer(`${items[i]!.emoji ? `${items[i]!.emoji} ` : ""}${items[i]!.label}`)}`);
       return i;
     },
+    timeZone(suggested, source) { return selectTerminalTimeZone(this, suggested, source); },
     secret: (q) => readSecret(q),
     close() {},
   };
@@ -628,20 +632,20 @@ async function askValid<T>(log: (m: string) => void, p: Prompter, q: string, def
   }
 }
 
-const nonEmpty = (what: string) => (s: string) => {
+export const nonEmpty = (what: string) => (s: string) => {
   if (!s.trim()) throw new Error(`${what} is required`);
   return s.trim();
 };
-const validZone = (s: string) => {
+export const validZone = (s: string) => {
   if (!IANAZone.isValidZone(s)) throw new Error(`"${s}" is not an IANA time zone (e.g. America/New_York)`);
   return s;
 };
-const validSquareEnv = (s: string): SquareEnv => {
+export const validSquareEnv = (s: string): SquareEnv => {
   const v = s.trim().toLowerCase();
   if (v !== "sandbox" && v !== "production") throw new Error(`"${s}" is not sandbox or production`);
   return v;
 };
-const validCurrency = (s: string) => {
+export const validCurrency = (s: string) => {
   const v = s.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(v)) throw new Error(`"${s}" is not a 3-letter currency code`);
   return v;
@@ -662,7 +666,7 @@ export const validGlossGeniusUrl = (s: string): string => {
   return `https://${host}${u.pathname === "/" ? "" : u.pathname}`;
 };
 /** The booking page the website step found, as a default for the "Booking page URL" prompt; undefined unless it is a valid GlossGenius page. */
-const siteBookingUrl = (vendor: { kind: string; url?: string | undefined } | undefined): string | undefined => {
+export const siteBookingUrl = (vendor: { kind: string; url?: string | undefined } | undefined): string | undefined => {
   if (vendor?.kind !== "glossgenius" || !vendor.url) return undefined;
   try {
     return validGlossGeniusUrl(vendor.url);
@@ -671,7 +675,7 @@ const siteBookingUrl = (vendor: { kind: string; url?: string | undefined } | und
   }
 };
 
-const validKeyFile = (cwd: string) => (s: string) => {
+export const validKeyFile = (cwd: string) => (s: string) => {
   const path = resolve(cwd, s.trim().replace(/^~(?=\/)/, process.env.HOME ?? "~"));
   let raw: string;
   try {
@@ -702,7 +706,7 @@ export interface InitDeps {
   /** The website step's crawl, model detection and model call (tests script them); default: the real ones. */
   website?: WebsiteDeps | undefined;
   /** Browser setup (tests substitute a fake). Default: a page on 127.0.0.1. */
-  startWebSetup?: (opts: { openUrl?: ((url: string) => void) | undefined }) => Promise<WebSetup>;
+  startWebSetup?: (opts: { openUrl?: ((url: string) => void) | undefined; allowBack?: boolean }) => Promise<WebSetup>;
 }
 
 export async function runInit(argv: string[], deps: InitDeps = {}): Promise<number> {
@@ -874,7 +878,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       if (deps.prompter) {
         p = deps.prompter;
       } else if (f.web || (await askSetupMode(ttyPrompter())) === "web") {
-        const session = await (deps.startWebSetup ?? ((opts) => startSetupServer(opts)))({ openUrl: deps.openUrl });
+        const session = await (deps.startWebSetup ?? ((opts) => startSetupServer(opts)))({ openUrl: deps.openUrl, allowBack: true });
         webSession = session;
         const terminal = sink;
         sink = (m: string) => {
@@ -886,219 +890,239 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       } else {
         p = ttyPrompter();
       }
-      const ask = p;
-      const found = [saved ? configPath : "", savedEnv ? envPath : ""].filter(Boolean);
-      if (found.length) {
-        // An existing setup: keep, review or start over. Keep is the default once a booking system is connected.
-        log(`Found ${found.join(" and ")}.\n`);
-        const connected = hasSavedBackend(savedEnv ?? {});
-        const existing = await p.choose("Existing setup", EXISTING_ITEMS, connected ? EXISTING_KEEP : 1, EXISTING_DESCRIPTION);
-        if (existing === EXISTING_KEEP) {
-          if (savedEnv?.PORT && !f.port && !env.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
-          log("\nKept your setup; nothing was changed.");
-          if (connected) log(startSteps());
-          else log("No booking system is connected yet, so the gateway will not start. Run `npm run init` again and pick \"Review and update\" to connect one.");
+      if (webSession) {
+        const result = await collectWebSetup(webSession, {
+          flags: f, env, saved, savedEnv, dir, configPath, envPath, port, callbackPort, example, localZone,
+          oauth, website: deps.website, openUrl: deps.openUrl, log,
+        });
+        saved = result.saved;
+        savedEnv = result.savedEnv;
+        if (!f.port && !env.PORT && savedEnv?.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
+        answers = result.answers;
+        backend = result.backend;
+        planned = result.planned;
+        if (result.keep) {
+          log("Kept your setup; nothing was changed.");
+          if (hasSavedBackend(savedEnv ?? {})) log(startSteps());
+          else log("No booking system is connected yet. Run `npm run init` to connect one.");
           return await finish(0);
         }
-        if (existing === EXISTING_RESET) saved = savedEnv = undefined;
-        log("");
-      }
-      if (!f.port && !env.PORT && savedEnv?.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
-      // Optional first step of a first run (or "Start over"): what the merchant's website says. It only ever
-      // supplies the lowest default of a question below; nothing from it is written without passing a prompt.
-      let site: Awaited<ReturnType<typeof askWebsite>>;
-      if (saved || savedEnv) {
-        log("gateway setup. Press Enter to keep each saved answer.\n");
-        if (f.website !== undefined) log('Note: --website is only used on a first run or after "Start over".\n');
       } else {
-        log(`${style.question(INTRO[0]!)}\n${INTRO.slice(1).join("\n")}\n`);
-        site = await askWebsite(p, { flag: f.website, given: { name: f.name, timezone: f.timezone, currency: f.currency, hours: f.hours }, env, log, validHours: validHoursSpec, secretKeys: CHILD_SECRET_KEYS, deps: deps.website });
-        log("");
-      }
-      const channelKnown = !!((known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID")) || known("OWNER_PHONE"));
-      const goal = await p.choose("What do you want agents to do?", GOAL_ITEMS, f["slack-bot-token"] || f["owner-phone"] || channelKnown ? GOAL_MESSAGE : GOAL_BOOK, GOAL_DESCRIPTION);
-      log("");
-      const configured = (yes: boolean) => (yes ? "configured" : "not configured");
-      // Same rule as hasSavedBackend: a key given inline (GOOGLE_SERVICE_ACCOUNT_JSON, the Docker/PaaS form) counts.
-      const googleKnown = !!((known("GOOGLE_SERVICE_ACCOUNT_FILE") || known("GOOGLE_SERVICE_ACCOUNT_JSON")) && known("GOOGLE_CALENDAR_ID"));
-      const systemKnown = [googleKnown, !!(known("SQUARE_ACCESS_TOKEN") && known("SQUARE_LOCATION_ID")), !!(known("GLOSSGENIUS_BOOKING_URL") && googleKnown)];
-      // The system the site itself books through sets the default only when nothing else has: no flag, nothing configured.
-      const vendor = site?.vendor;
-      const vendorLabel = vendor ? cleanLine(vendor.label, 40) : "";
-      const systemFlagged = !!(f.square || f["glossgenius-url"] || f["google-key-file"] || f["calendar-id"]);
-      const vendorSystem = !vendor || systemFlagged || systemKnown.some(Boolean) ? undefined : vendor.kind === "square" ? 1 : vendor.kind === "glossgenius" ? 2 : undefined;
-      if (vendorSystem !== undefined) log(`Your site books through ${vendorLabel}, so it is selected below.\n`);
-      else if (vendor && vendor.kind !== "square" && vendor.kind !== "glossgenius") {
-        log(`Your site books through ${vendorLabel}, which Gateway cannot connect to yet. Agents can still book into a Google Calendar and message you.\n`);
-      }
-      const system = await p.choose(
-        "Booking system",
-        [
-          { emoji: "📅", label: "Google Calendar", status: configured(systemKnown[0]!) },
-          { emoji: "⬛", label: "Square Appointments", status: configured(systemKnown[1]!) },
-          { emoji: "💅", label: "GlossGenius (shadow mode: reads your booking page, writes to Google Calendar)", status: configured(systemKnown[2]!) },
-        ],
-        f.square || savedEnv?.SQUARE_ACCESS_TOKEN ? 1 : f["glossgenius-url"] || savedEnv?.GLOSSGENIUS_BOOKING_URL ? 2 : (vendorSystem ?? 0),
-        [
-          "  Google Calendar: services and hours live in config.json",
-          "  Square Appointments: services and hours come from Square",
-          "  GlossGenius: services, prices and open times come from your booking page; you get a text per booking",
-        ],
-      );
-      const useSquare = system === 1;
-      const useGlossGenius = system === 2;
-      planned = GUIDE_KINDS[system]!;
-      // A system not set up yet: show what it needs, then ask whether to connect now. "Not yet" writes
-      // the files without a booking system; the guide is opened in the browser only when asked for.
-      const guided = !systemKnown[system];
-      let notReady = !!(f["no-backend"] || f["skip-google"]);
-      const guideIO = { env, log, openUrl: deps.openUrl };
-      if (guided && !notReady) {
-        notReady = !(await showGuide(p, SETUP_GUIDES[planned](callbackPort), guideIO));
-        // "Finish later" does not end the wizard: say what the remaining questions are for.
-        if (notReady) log("Nothing is connected for now. The next answers are saved, so `npm run init` starts from them next time.");
-      }
-      log("");
-      const name = await askChecked(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
-      const siteZone = (f.timezone ?? saved?.timezone) === undefined ? site?.timezone : undefined;
-      if (siteZone && siteZone !== localZone) log(`Your site points to the time zone ${cleanLine(siteZone, 64)}; this machine is set to ${localZone}.`);
-      // After a site was read, a default that is only this machine's zone is labelled as such: it follows the site's summary and could be taken for the site's.
-      const zoneKnown = f.timezone ?? saved?.timezone ?? siteZone;
-      const timezone = await askChecked(p, "Time zone", zoneKnown ?? localZone, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
-      const currency = await askChecked(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
-      // Square and GlossGenius set services, prices and hours themselves. Not ready, they are asked on the next
-      // run, unless the website step found services or hours: those are asked about now, or the reading is lost.
-      const store = useSquare || useGlossGenius;
-      const siteCatalog = !!site && (site.bookable.length > 0 || site.ask.length > 0 || site.hours !== undefined);
-      const platform = store || (notReady && !siteCatalog);
-      // Buffer and price are explained once, at the first service that is asked about: not above a prompt left empty.
-      let explained = false;
-      const askService = async (sname: string, prev?: ServiceAnswer): Promise<ServiceAnswer> => {
-        if (!explained) {
-          log(style.dim("    Buffer after: minutes kept free once a booking ends (clean-up, travel, a breather) before the next one can start; 0 for none."));
-          log(style.dim("    Price: 0 is a free service."));
-          explained = true;
+        const ask = p;
+        const found = [saved ? configPath : "", savedEnv ? envPath : ""].filter(Boolean);
+        if (found.length) {
+          // An existing setup: keep, review or start over. Keep is the default once a booking system is connected.
+          log(`Found ${found.join(" and ")}.\n`);
+          const connected = hasSavedBackend(savedEnv ?? {});
+          const existing = await p.choose("Existing setup", EXISTING_ITEMS, connected ? EXISTING_KEEP : 1, EXISTING_DESCRIPTION);
+          if (existing === EXISTING_KEEP) {
+            if (savedEnv?.PORT && !f.port && !env.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
+            log("\nKept your setup; nothing was changed.");
+            if (connected) log(startSteps());
+            else log("No booking system is connected yet, so the gateway will not start. Run `npm run init` again and pick \"Review and update\" to connect one.");
+            return await finish(0);
+          }
+          if (existing === EXISTING_RESET) saved = savedEnv = undefined;
+          log("");
         }
-        return {
-          name: sname,
-          duration_min: await askChecked(ask, "    Duration (minutes)", String(prev?.duration_min ?? 60), (s) => parseIntIn(s, "duration", 1, 1440)),
-          buffer_min: await askChecked(ask, "    Buffer after (minutes)", String(prev?.buffer_min ?? 0), (s) => parseIntIn(s, "buffer", 0, 1440)),
-          price_cents: await askChecked(ask, `    Price (${currency})`, prev ? (prev.price_cents / 100).toFixed(2) : "0", parsePriceCents),
+        if (!f.port && !env.PORT && savedEnv?.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
+        // Optional first step of a first run (or "Start over"): what the merchant's website says. It only ever
+        // supplies the lowest default of a question below; nothing from it is written without passing a prompt.
+        let site: Awaited<ReturnType<typeof askWebsite>>;
+        if (saved || savedEnv) {
+          log("gateway setup. Press Enter to keep each saved answer.\n");
+          if (f.website !== undefined) log('Note: --website is only used on a first run or after "Start over".\n');
+        } else {
+          log(`${style.question(INTRO[0]!)}\n${INTRO.slice(1).join("\n")}\n`);
+          site = await askWebsite(p, { flag: f.website, given: { name: f.name, timezone: f.timezone, currency: f.currency, hours: f.hours }, env, log, validHours: validHoursSpec, secretKeys: CHILD_SECRET_KEYS, deps: deps.website });
+          log("");
+        }
+        const channelKnown = !!((known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID")) || known("OWNER_PHONE"));
+        const goal = await p.choose("What do you want agents to do?", GOAL_ITEMS, f["slack-bot-token"] || f["owner-phone"] || channelKnown ? GOAL_MESSAGE : GOAL_BOOK, GOAL_DESCRIPTION);
+        log("");
+        const configured = (yes: boolean) => (yes ? "configured" : "not configured");
+        // Same rule as hasSavedBackend: a key given inline (GOOGLE_SERVICE_ACCOUNT_JSON, the Docker/PaaS form) counts.
+        const googleKnown = !!((known("GOOGLE_SERVICE_ACCOUNT_FILE") || known("GOOGLE_SERVICE_ACCOUNT_JSON")) && known("GOOGLE_CALENDAR_ID"));
+        const systemKnown = [googleKnown, !!(known("SQUARE_ACCESS_TOKEN") && known("SQUARE_LOCATION_ID")), !!(known("GLOSSGENIUS_BOOKING_URL") && googleKnown)];
+        // The system the site itself books through sets the default only when nothing else has: no flag, nothing configured.
+        const vendor = site?.vendor;
+        const vendorLabel = vendor ? cleanLine(vendor.label, 40) : "";
+        const systemFlagged = !!(f.square || f["glossgenius-url"] || f["google-key-file"] || f["calendar-id"]);
+        const vendorSystem = !vendor || systemFlagged || systemKnown.some(Boolean) ? undefined : vendor.kind === "square" ? 1 : vendor.kind === "glossgenius" ? 2 : undefined;
+        if (vendorSystem !== undefined) log(`Your site books through ${vendorLabel}, so it is selected below.\n`);
+        else if (vendor && vendor.kind !== "square" && vendor.kind !== "glossgenius") {
+          log(`Your site books through ${vendorLabel}, which Gateway cannot connect to yet. Agents can still book into a Google Calendar and message you.\n`);
+        }
+        const system = await p.choose(
+          "Booking system",
+          [
+            { emoji: "📅", label: "Google Calendar", status: configured(systemKnown[0]!) },
+            { emoji: "⬛", label: "Square Appointments", status: configured(systemKnown[1]!) },
+            { emoji: "💅", label: "GlossGenius (shadow mode: reads your booking page, writes to Google Calendar)", status: configured(systemKnown[2]!) },
+          ],
+          f.square || savedEnv?.SQUARE_ACCESS_TOKEN ? 1 : f["glossgenius-url"] || savedEnv?.GLOSSGENIUS_BOOKING_URL ? 2 : (vendorSystem ?? 0),
+          [
+            "  Google Calendar: services and hours live in config.json",
+            "  Square Appointments: services and hours come from Square",
+            "  GlossGenius: services, prices and open times come from your booking page; you get a text per booking",
+          ],
+        );
+        const useSquare = system === 1;
+        const useGlossGenius = system === 2;
+        planned = GUIDE_KINDS[system]!;
+        // A system not set up yet: show what it needs, then ask whether to connect now. "Not yet" writes
+        // the files without a booking system; the guide is opened in the browser only when asked for.
+        const guided = !systemKnown[system];
+        let notReady = !!(f["no-backend"] || f["skip-google"]);
+        const guideIO = { env, log, openUrl: deps.openUrl };
+        if (guided && !notReady) {
+          notReady = !(await showGuide(p, SETUP_GUIDES[planned](callbackPort), guideIO));
+          // "Finish later" does not end the wizard: say what the remaining questions are for.
+          if (notReady) log("Nothing is connected for now. The next answers are saved, so `npm run init` starts from them next time.");
+        }
+        log("");
+        const name = await askChecked(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
+        const siteZone = (f.timezone ?? saved?.timezone) === undefined ? site?.timezone : undefined;
+        if (siteZone && siteZone !== localZone) log(`Your site points to the time zone ${cleanLine(siteZone, 64)}; this machine is set to ${localZone}.`);
+        // After a site was read, a default that is only this machine's zone is labelled as such: it follows the site's summary and could be taken for the site's.
+        const zoneKnown = f.timezone ?? saved?.timezone ?? siteZone;
+        const timezone = p.timeZone ? validZone(await p.timeZone(zoneKnown ?? localZone, f.timezone ? "provided" : saved?.timezone ? "saved" : siteZone ? "website" : "device")) :
+          await askChecked(p, "Time zone", zoneKnown ?? localZone, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
+        const currency = await askChecked(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
+        // Square and GlossGenius set services, prices and hours themselves. Not ready, they are asked on the next
+        // run, unless the website step found services or hours: those are asked about now, or the reading is lost.
+        const store = useSquare || useGlossGenius;
+        const siteCatalog = !!site && (site.bookable.length > 0 || site.ask.length > 0 || site.hours !== undefined);
+        const platform = store || (notReady && !siteCatalog);
+        // Buffer and price are explained once, at the first service that is asked about: not above a prompt left empty.
+        let explained = false;
+        const askService = async (sname: string, prev?: ServiceAnswer): Promise<ServiceAnswer> => {
+          if (!explained) {
+            log(style.dim("    Buffer after: minutes kept free once a booking ends (clean-up, travel, a breather) before the next one can start; 0 for none."));
+            log(style.dim("    Price: 0 is a free service."));
+            explained = true;
+          }
+          return {
+            name: sname,
+            duration_min: await askChecked(ask, "    Duration (minutes)", String(prev?.duration_min ?? 60), (s) => parseIntIn(s, "duration", 1, 1440)),
+            buffer_min: await askChecked(ask, "    Buffer after (minutes)", String(prev?.buffer_min ?? 0), (s) => parseIntIn(s, "buffer", 0, 1440)),
+            price_cents: await askChecked(ask, `    Price (${currency})`, prev ? (prev.price_cents / 100).toFixed(2) : "0", parsePriceCents),
+          };
         };
-      };
-      const services: ServiceAnswer[] = [];
-      const savedServices = (saved?.services ?? []).map(({ name, duration_min, buffer_min, price_cents }) => ({ name, duration_min, buffer_min, price_cents }));
-      // Fixed-price services from the site are offered like saved ones; there are none when anything is saved.
-      // A price the page wrote in a currency ("US$40") is not offered once the merchant picked another: it goes to the ask list.
-      const siteBookable = (site?.bookable ?? []).filter((b) => !b.price_currency || b.price_currency === currency);
-      const siteAsk = [...(site?.ask ?? []), ...(site?.bookable ?? []).filter((b) => !siteBookable.includes(b)).map((b) => ({ name: b.name, price_note: undefined }))].slice(0, 50);
-      const siteServices = siteBookable.map((b) => ({ name: b.name, duration_min: b.duration_min ?? 60, buffer_min: 0, price_cents: b.price_cents }));
-      const prefilled = [...savedServices, ...siteServices];
-      let askServices: Answers["ask_services"];
-      // What the site lists with no single fixed price, so not bookable. One yes or no for all of them,
-      // so every one is shown (50 at most): nothing is written that was not on screen.
-      const offerAskServices = async (also: boolean) => {
-        if (platform || !siteAsk.length) return;
-        const shown = siteAsk.map((s) => `  - ${cleanLine(s.name, 80)}${s.price_note ? ` (${cleanLine(s.price_note, 60)})` : ""}`);
-        log(`\nYour site ${also ? "also " : ""}lists ${siteAsk.length === 1 ? "a service" : `${siteAsk.length} services`} the wizard could not read one fixed price for:\n${shown.join("\n")}`);
-        log(style.dim("As ask-the-owner services, agents can read them and message you about them, but cannot book them."));
-        if (await ask.confirm("List them as ask-the-owner services?")) {
-          askServices = siteAsk;
-          if (goal === GOAL_BOOK && !channelKnown) {
-            log('Note: with "Book appointments" alone, agents can only tell customers to contact you about these. Run `npm run init` again and pick "Book appointments and message me" to let them leave you a message.');
+        const services: ServiceAnswer[] = [];
+        const savedServices = (saved?.services ?? []).map(({ name, duration_min, buffer_min, price_cents }) => ({ name, duration_min, buffer_min, price_cents }));
+        // Fixed-price services from the site are offered like saved ones; there are none when anything is saved.
+        // A price the page wrote in a currency ("US$40") is not offered once the merchant picked another: it goes to the ask list.
+        const siteBookable = (site?.bookable ?? []).filter((b) => !b.price_currency || b.price_currency === currency);
+        const siteAsk = [...(site?.ask ?? []), ...(site?.bookable ?? []).filter((b) => !siteBookable.includes(b)).map((b) => ({ name: b.name, price_note: undefined }))].slice(0, 50);
+        const siteServices = siteBookable.map((b) => ({ name: b.name, duration_min: b.duration_min ?? 60, buffer_min: 0, price_cents: b.price_cents }));
+        const prefilled = [...savedServices, ...siteServices];
+        let askServices: Answers["ask_services"];
+        // What the site lists with no single fixed price, so not bookable. One yes or no for all of them,
+        // so every one is shown (50 at most): nothing is written that was not on screen.
+        const offerAskServices = async (also: boolean) => {
+          if (platform || !siteAsk.length) return;
+          const shown = siteAsk.map((s) => `  - ${cleanLine(s.name, 80)}${s.price_note ? ` (${cleanLine(s.price_note, 60)})` : ""}`);
+          log(`\nYour site ${also ? "also " : ""}lists ${siteAsk.length === 1 ? "a service" : `${siteAsk.length} services`} the wizard could not read one fixed price for:\n${shown.join("\n")}`);
+          log(style.dim("As ask-the-owner services, agents can read them and message you about them, but cannot book them."));
+          if (await ask.confirm("List them as ask-the-owner services?")) {
+            askServices = siteAsk;
+            if (goal === GOAL_BOOK && !channelKnown) {
+              log('Note: with "Book appointments" alone, agents can only tell customers to contact you about these. Run `npm run init` again and pick "Book appointments and message me" to let them leave you a message.');
+            }
+          }
+        };
+        if (platform) {
+          services.push(...savedServices); // Not asked here; a resume leaves them as they were.
+          if (store && site && (site.bookable.length || site.ask.length)) {
+            log(`${useSquare ? "Square" : "GlossGenius"} supplies your services, so the ones found on your site were not added.`);
+          }
+        } else {
+          // With nothing to walk through first, what the site lists is shown before the empty "Service 1 name" prompt, not after it.
+          if (!prefilled.length) await offerAskServices(false);
+          log(style.dim("\nServices (what people can book: a haircut, a paid consult, a free intro call). Leave the name empty when done."));
+          if (savedServices.length) log("Saved services come first: Enter keeps an answer, a new name renames the service, - removes it.");
+          else if (siteServices.length) log("Services from your site come first: Enter keeps an answer, a new name renames the service, - removes it.");
+          for (const prev of prefilled) {
+            const sname = (await p.ask(`  Service ${services.length + 1} name`, prev.name)).trim();
+            if (sname === "-") {
+              log(`    Removed ${prev.name}.`);
+              continue;
+            }
+            services.push(await askService(sname, prev));
           }
         }
-      };
-      if (platform) {
-        services.push(...savedServices); // Not asked here; a resume leaves them as they were.
-        if (store && site && (site.bookable.length || site.ask.length)) {
-          log(`${useSquare ? "Square" : "GlossGenius"} supplies your services, so the ones found on your site were not added.`);
-        }
-      } else {
-        // With nothing to walk through first, what the site lists is shown before the empty "Service 1 name" prompt, not after it.
-        if (!prefilled.length) await offerAskServices(false);
-        log(style.dim("\nServices (what people can book: a haircut, a paid consult, a free intro call). Leave the name empty when done."));
-        if (savedServices.length) log("Saved services come first: Enter keeps an answer, a new name renames the service, - removes it.");
-        else if (siteServices.length) log("Services from your site come first: Enter keeps an answer, a new name renames the service, - removes it.");
-        for (const prev of prefilled) {
-          const sname = (await p.ask(`  Service ${services.length + 1} name`, prev.name)).trim();
-          if (sname === "-") {
-            log(`    Removed ${prev.name}.`);
+        while (!platform) {
+          const sname = await p.ask(`  Service ${services.length + 1} name`);
+          if (!sname) {
+            if (services.length || notReady) break; // nothing connected yet: the list can be filled in on the next run
+            log("  Add at least one service.");
             continue;
           }
-          services.push(await askService(sname, prev));
+          services.push(await askService(sname));
         }
-      }
-      while (!platform) {
-        const sname = await p.ask(`  Service ${services.length + 1} name`);
-        if (!sname) {
-          if (services.length || notReady) break; // nothing connected yet: the list can be filled in on the next run
-          log("  Add at least one service.");
-          continue;
+        if (prefilled.length) await offerAskServices(true);
+        const hoursKept = f.hours ?? (saved ? renderHours(saved.hours) : undefined);
+        let hours = hoursKept ?? DEFAULT_HOURS;
+        if (!platform) {
+          log('\nOpening hours, e.g. "mon-fri 09:00-17:00; sat 10:00-14:00". Unlisted days are closed.');
+          // The site's hours are a default for this prompt only: where hours are not asked they are never written.
+          hours = await askChecked(p, "Hours", hoursKept ?? site?.hours ?? DEFAULT_HOURS, (s) => {
+            parseHours(s);
+            return s;
+          });
         }
-        services.push(await askService(sname));
-      }
-      if (prefilled.length) await offerAskServices(true);
-      const hoursKept = f.hours ?? (saved ? renderHours(saved.hours) : undefined);
-      let hours = hoursKept ?? DEFAULT_HOURS;
-      if (!platform) {
-        log('\nOpening hours, e.g. "mon-fri 09:00-17:00; sat 10:00-14:00". Unlisted days are closed.');
-        // The site's hours are a default for this prompt only: where hours are not asked they are never written.
-        hours = await askChecked(p, "Hours", hoursKept ?? site?.hours ?? DEFAULT_HOURS, (s) => {
-          parseHours(s);
-          return s;
-        });
-      }
-      answers = { name, timezone, currency, services, hours, ask_services: askServices };
-      if (notReady) {
-        // Nothing to connect: a booking system already in .env is kept (buildEnvFile).
-      } else if (useSquare) {
-        if (!guided) {
-          log(style.dim("\nSquare: create an application at https://developer.squareup.com/console/en/apps, and on its OAuth page set the"));
-          log(style.dim(`Redirect URL to ${callbackUrl(callbackPort)} (Sandbox or Production, matching the environment below).`));
-        } else log(style.dim("\nSquare: the Redirect URL goes on the Sandbox or Production tab, matching the environment below."));
-        const sqEnv = await askChecked(p, "Square environment (sandbox or production)", f["square-env"] ?? known("SQUARE_ENV") ?? "production", validSquareEnv);
-        const appId = await askChecked(p, "Application ID", f["square-app-id"] ?? known("SQUARE_APP_ID"), nonEmpty("Application ID"));
-        const secretFromEnv = known("SQUARE_APP_SECRET")?.trim() || undefined;
-        const appSecret = await askChecked(p, "Application secret", secretFromEnv, nonEmpty("Application secret"), secretFromEnv ? "from .env" : undefined);
-        const tokens = await squareAuthorize({ appId, appSecret, env: sqEnv }, callbackPort, oauth, log);
-        log("Square authorised.");
-        const locations = await oauth.listLocations(sqEnv, tokens.accessToken);
-        const active = locations.filter((l) => l.status !== "INACTIVE");
-        if (!active.length) throw new Error("this Square account has no active locations");
-        let loc: SquareLocation;
-        if (active.length === 1) {
-          loc = active[0]!;
-          log(`Location: ${loc.name} (${loc.id})`);
+        answers = { name, timezone, currency, services, hours, ask_services: askServices };
+        if (notReady) {
+          // Nothing to connect: a booking system already in .env is kept (buildEnvFile).
+        } else if (useSquare) {
+          if (!guided) {
+            log(style.dim("\nSquare: create an application at https://developer.squareup.com/console/en/apps, and on its OAuth page set the"));
+            log(style.dim(`Redirect URL to ${callbackUrl(callbackPort)} (Sandbox or Production, matching the environment below).`));
+          } else log(style.dim("\nSquare: the Redirect URL goes on the Sandbox or Production tab, matching the environment below."));
+          const sqEnv = await askChecked(p, "Square environment (sandbox or production)", f["square-env"] ?? known("SQUARE_ENV") ?? "production", validSquareEnv);
+          const appId = await askChecked(p, "Application ID", f["square-app-id"] ?? known("SQUARE_APP_ID"), nonEmpty("Application ID"));
+          const secretFromEnv = known("SQUARE_APP_SECRET")?.trim() || undefined;
+          const appSecret = await askChecked(p, "Application secret", secretFromEnv, nonEmpty("Application secret"), secretFromEnv ? "from .env" : undefined);
+          const tokens = await squareAuthorize({ appId, appSecret, env: sqEnv }, callbackPort, oauth, log);
+          log("Square authorised.");
+          const locations = await oauth.listLocations(sqEnv, tokens.accessToken);
+          const active = locations.filter((l) => l.status !== "INACTIVE");
+          if (!active.length) throw new Error("this Square account has no active locations");
+          let loc: SquareLocation;
+          if (active.length === 1) {
+            loc = active[0]!;
+            log(`Location: ${loc.name} (${loc.id})`);
+          } else {
+            log("");
+            loc = active[await p.choose("Book at location", active.map((l) => ({ emoji: "📍", label: l.name, status: l.id + (l.timezone ? `, ${l.timezone}` : "") })))]!;
+          }
+          if (loc.timezone && loc.timezone !== timezone) log(`Note: Square has this location in ${loc.timezone}; the gateway will use ${timezone}.`);
+          backend = { kind: "square", env: sqEnv, accessToken: tokens.accessToken, locationId: loc.id, refreshToken: tokens.refreshToken, appId, appSecret };
+        } else if (useGlossGenius) {
+          if (!guided) log(style.dim("\nGlossGenius: open GlossGenius -> Online Booking -> Share booking link, and copy the https://<yourname>.glossgenius.com link."));
+          const bookingUrl = await askChecked(p, "Booking page URL", f["glossgenius-url"] ?? known("GLOSSGENIUS_BOOKING_URL") ?? siteBookingUrl(vendor), validGlossGeniusUrl);
+          log(style.dim("\nAgent bookings are written to a Google Calendar you share with a service account (see docs/connectors/google.md)."));
+          const keyFile = await askChecked(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
+          const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
+          backend = { kind: "glossgenius", bookingUrl, keyFile, calendarId };
         } else {
-          log("");
-          loc = active[await p.choose("Book at location", active.map((l) => ({ emoji: "📍", label: l.name, status: l.id + (l.timezone ? `, ${l.timezone}` : "") })))]!;
+          log(style.dim("\nGoogle Calendar (service account key + shared calendar; see docs/connectors/google.md)."));
+          const keyFile = await askChecked(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
+          const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
+          backend = { kind: "google", keyFile, calendarId };
         }
-        if (loc.timezone && loc.timezone !== timezone) log(`Note: Square has this location in ${loc.timezone}; the gateway will use ${timezone}.`);
-        backend = { kind: "square", env: sqEnv, accessToken: tokens.accessToken, locationId: loc.id, refreshToken: tokens.refreshToken, appId, appSecret };
-      } else if (useGlossGenius) {
-        if (!guided) log(style.dim("\nGlossGenius: open GlossGenius -> Online Booking -> Share booking link, and copy the https://<yourname>.glossgenius.com link."));
-        const bookingUrl = await askChecked(p, "Booking page URL", f["glossgenius-url"] ?? known("GLOSSGENIUS_BOOKING_URL") ?? siteBookingUrl(vendor), validGlossGeniusUrl);
-        log(style.dim("\nAgent bookings are written to a Google Calendar you share with a service account (see docs/connectors/google.md)."));
-        const keyFile = await askChecked(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
-        const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
-        backend = { kind: "glossgenius", bookingUrl, keyFile, calendarId };
-      } else {
-        log(style.dim("\nGoogle Calendar (service account key + shared calendar; see docs/connectors/google.md)."));
-        const keyFile = await askChecked(p, "Path to the service account JSON key", f["google-key-file"] ?? known("GOOGLE_SERVICE_ACCOUNT_FILE"), validKeyFile(dir));
-        const calendarId = await askChecked(p, "Calendar ID", f["calendar-id"] ?? known("GOOGLE_CALENDAR_ID"), nonEmpty("Calendar ID"));
-        backend = { kind: "google", keyFile, calendarId };
-      }
-      // Owner channel (none, Slack or Twilio), for any booking system: src/cli/init-channel.ts.
-      // Asked for the "message me" goal, and always for GlossGenius, whose bookings are otherwise only logged.
-      if (backend && (goal === GOAL_MESSAGE || backend.kind === "glossgenius")) {
-        Object.assign(backend, await askOwnerChannel(p, { known, flags: f, log, glossgenius: backend.kind === "glossgenius", askValid: askChecked, preferSlack: goal === GOAL_MESSAGE, guide: guideIO }));
-      } else if (backend) {
-        // Not asked: a channel already in .env stays as it is.
-        try {
-          Object.assign(backend, channelFromFlags(f, { ...savedEnv, ...env }));
-        } catch (e) {
-          log(`Note: owner channel settings in .env ignored: ${(e as Error).message}`);
+        // Owner channel (none, Slack or Twilio), for any booking system: src/cli/init-channel.ts.
+        // Asked for the "message me" goal, and always for GlossGenius, whose bookings are otherwise only logged.
+        if (backend && (goal === GOAL_MESSAGE || backend.kind === "glossgenius")) {
+          Object.assign(backend, await askOwnerChannel(p, { known, flags: f, log, glossgenius: backend.kind === "glossgenius", askValid: askChecked, preferSlack: goal === GOAL_MESSAGE, guide: guideIO }));
+        } else if (backend) {
+          // Not asked: a channel already in .env stays as it is.
+          try {
+            Object.assign(backend, channelFromFlags(f, { ...savedEnv, ...env }));
+          } catch (e) {
+            log(`Note: owner channel settings in .env ignored: ${(e as Error).message}`);
+          }
         }
       }
     }
