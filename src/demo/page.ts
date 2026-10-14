@@ -15,12 +15,12 @@ export const DEMO_BOOKING_TTL_MIN = 60;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 export function playgroundPrompt(config: Config, base: string): string {
-  return `Book me a dog bath Thursday afternoon at ${config.name} and ask if they take large dogs. Start at ${base}/llms.txt`;
+  return `Book me a dog bath Thursday afternoon at ${config.name} (${base}) and ask if they take large dogs.`;
 }
 
 /** The same kind of prompt for one service, for its card. */
 function servicePrompt(config: Config, base: string, serviceName: string): string {
-  return `Book me a ${serviceName.toLowerCase()} tomorrow afternoon at ${config.name}. Start at ${base}/llms.txt`;
+  return `Book me a ${serviceName.toLowerCase()} tomorrow afternoon at ${config.name} (${base}).`;
 }
 
 const DAYS = [

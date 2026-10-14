@@ -80,7 +80,8 @@ describe("demo mode over HTTP", () => {
   it("serves the playground page to browsers and markdown with the playground note to agents", async () => {
     const html = await (await fetch(base, { headers: { accept: "text/html" } })).text();
     expect(html).toContain("Playground");
-    expect(html).toContain(`Start at ${base}/llms.txt`);
+    expect(html).toContain(`at Paws &amp; Suds Dog Grooming (${base}) and ask`);
+    expect(html).not.toContain("Start at");
     const md = await (await fetch(`${base}/llms.txt`)).text();
     expect(md).toContain("## This is a playground");
     expect(md).toContain("X-Agent-Name");
