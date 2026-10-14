@@ -533,6 +533,11 @@ describe("owner side", () => {
     expect(await ops.onOwnerMessage({ provider_msg_id: "g0", user_id: "U1", text: "Yes, 3pm", backfilled: true })).toBe("ignored");
     // Typed before the thread existed.
     expect(await ops.onOwnerMessage(top("g1", Date.parse("2026-10-08T16:59:00Z")))).toBe("ignored");
+    // Prompt reply typed 2s after the opener (within BACKFILL_SKEW_MS) is accepted; the thread's own opening does not block it.
+    const prompt = setup();
+    const p1 = await leaveOk(prompt.ops); // 17:00:00
+    expect(await prompt.ops.onOwnerMessage({ provider_msg_id: "wamid.fast", user_id: "12025550199", text: "Yes, 3pm", sent_at_ms: Date.parse("2026-10-08T17:00:02Z") })).toBe("accepted");
+    expect(prompt.store.getThread(p1.thread_id)!.state).toBe("answered");
     // Typed while only this thread waited and nothing has changed since: accepted.
     expect(await ops.onOwnerMessage(top("g2", typed))).toBe("accepted");
     expect(store.getThread(a.thread_id)!.state).toBe("answered");
