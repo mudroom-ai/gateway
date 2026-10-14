@@ -28,6 +28,7 @@ import { listServices } from "./services.js";
 import { findSlots } from "./slots.js";
 import { openStore, type Store } from "./store/sqlite.js";
 import { createMessageOps, type MessageOps } from "./messages.js";
+import { demoConnector, demoWiring, feedRoute, OWNER_AWAY_AFTER_MS, OWNER_AWAY_TEXT, type DemoWiring } from "./demo/index.js";
 
 export function toBookingConnector(config: Config, c: CalendarConnector | BookingConnector): BookingConnector {
   return isBookingConnector(c) ? c : new CalendarBookingConnector(config, c);
@@ -57,6 +58,7 @@ export function buildOps(
       if (!r.ok) throw new Error(r.error.message);
       return r.data.services;
     },
+    ...(settings.demo ? { ownerAway: { after_ms: OWNER_AWAY_AFTER_MS, text: OWNER_AWAY_TEXT } } : {}),
   });
   return {
     listServices: () => listServices(config, connector),
@@ -182,7 +184,8 @@ export function createApp(
   settings: RuntimeSettings,
   deps: { connector?: CalendarConnector | BookingConnector; store?: Store; owner?: CommunicationConnector | null } = {},
 ) {
-  const connector = toBookingConnector(config, deps.connector ?? createConnector(config, settings));
+  const base = toBookingConnector(config, deps.connector ?? createConnector(config, settings));
+  const connector = settings.demo ? demoConnector(base) : base;
   const store = deps.store ?? openStore(settings.db_path);
   const app = express();
   app.use(hostValidation(settings.host, settings.allowed_hosts, sendError));
@@ -211,17 +214,24 @@ export function createApp(
   ops.book = withContactLimits(ops.book, { limits: config.limits, ...sqliteContactLookups(store.db, config.merchant_id) });
   const ipOpts = { trustCfHeader: settings.trust_cf_connecting_ip && Array.isArray(settings.trust_proxy), debug: settings.trust_proxy_debug };
   const guard = [authMiddleware(settings.api_keys, sendError), requestRateLimit(config.limits, sendError, ipOpts)];
+  const demo: DemoWiring | undefined = settings.demo
+    ? demoWiring({ store, connector, merchantId: config.merchant_id, timezone: config.timezone, onError: sendError, ipOpts })
+    : undefined;
+  // main() starts the auto-cancel janitor through this, after listen.
+  app.locals.demo = demo;
 
   // Rate-limited like the API: an agent may fetch this on every task.
   const pub = process.env.PUBLIC_URL;
   const discoveryLimit = requestRateLimit(config.limits, sendError, ipOpts);
   const msgMode = messages?.enabled ? messages.mode : undefined;
-  app.get("/", discoveryLimit, homeHandler(config, connector, pub, msgMode));
-  app.get(["/llms.txt", "/.well-known/llms.txt"], discoveryLimit, agentInstructionsHandler(config, connector, pub, msgMode));
+  app.get("/", discoveryLimit, homeHandler(config, connector, pub, msgMode, settings.demo));
+  app.get(["/llms.txt", "/.well-known/llms.txt"], discoveryLimit, agentInstructionsHandler(config, connector, pub, msgMode, settings.demo));
+  // Its own counter: the page polls every 10 s and must not spend a visitor's agent quota.
+  if (demo) feedRoute(app, demo.traffic, requestRateLimit(config.limits, sendError, ipOpts));
   app.get("/openapi.json", discoveryLimit, openApiHandler(config, connector, pub, msgMode));
   app.get("/robots.txt", discoveryLimit, robotsHandler(pub));
 
-  app.use("/api", ...guard, apiRouter(ops));
+  app.use("/api", ...(demo ? [demo.record] : []), ...guard, ...(demo ? [demo.limits] : []), apiRouter(ops));
   app.use(jsonErrorHandler());
 
   return app;
@@ -291,12 +301,17 @@ async function main() {
     if (settings.messages_enabled) await checkOwnerChannel(owner);
     const app = createApp(config, settings, { connector, owner: owner ?? null });
     const messages = app.locals.messages as MessageOps | undefined;
+    const demo = app.locals.demo as DemoWiring | undefined;
     console.log(`[gateway] ${describeTrustProxy(settings.trust_proxy, settings.trust_cf_connecting_ip)}`);
     const server = listenOrExit(app, settings.host, settings.port, () => {
       console.log(`[gateway] ${config.name} listening on http://${settings.host}:${settings.port} (/api, /llms.txt)`);
       if (messages?.enabled) {
         console.log(`[gateway] messages on (${messages.mode === "two_way" ? "owner replies come back in-thread" : "one-way: owner contacts customers directly"})`);
         void messages.start();
+      }
+      if (demo) {
+        console.log("[gateway] demo mode: playground at /, bookings cancel themselves after 60 minutes");
+        demo.start();
       }
     });
     process.once("SIGTERM", () => {

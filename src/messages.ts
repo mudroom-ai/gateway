@@ -170,6 +170,8 @@ export interface MessageDeps {
   now?: () => Date;
   timers?: Timers;
   log?: (line: string) => void;
+  /** Demo mode: a two-way thread still awaiting the owner `after_ms` after its last change gets `text` as a templated owner reply. */
+  ownerAway?: { after_ms: number; text: string };
 }
 
 export const POLL_SECONDS = 60;
@@ -833,6 +835,31 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     }
   }
 
+  /**
+   * Demo mode: so an agent is never left waiting on a playground, a thread the owner has not answered within
+   * `after_ms` gets a templated owner reply, stored like a real one (the thread becomes answered) and posted in
+   * the owner's thread so the channel shows what the agent was told. Keyed by the thread's last change, so each
+   * unanswered agent message gets at most one.
+   */
+  function answerForAwayOwner(away: { after_ms: number; text: string }, nowMs: number): void {
+    for (const t of store.listAwaitingOwnerThreads(merchant)) {
+      if (t.updated_at_ms > nowMs - away.after_ms) continue;
+      const tr = transition(t.state, "owner_reply");
+      if (!tr.ok) continue;
+      const stored = store.tx(() => {
+        const id = store.insertThreadMessage({ thread_id: t.thread_id, author: "owner", text: away.text, provider_msg_id: `away:${t.thread_id}:${t.updated_at_ms}`, at: local(nowMs) });
+        if (id === null) return false;
+        store.updateThread(t.thread_id, { state: tr.state, updated_at_ms: nowMs });
+        return true;
+      });
+      if (!stored) continue;
+      log(`[gateway] owner away: templated reply thread=${t.thread_id}`);
+      bookingLog("owner_away_reply", null, null, { thread_id: t.thread_id });
+      wake(t.thread_id, "replied");
+      postNotice(t, away.text);
+    }
+  }
+
   async function sweepInner(): Promise<void> {
     const now = clock();
     const nowMs = now.getTime();
@@ -844,6 +871,7 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       wake(id, "closed");
     }
     store.purgeClosedThreads(nowMs - PURGE_CLOSED_MS);
+    if (deps.ownerAway) answerForAwayOwner(deps.ownerAway, nowMs);
     // Sequential on purpose: a slow provider must not pile up parallel sends.
     for (const row of store.claimDueOutbox(nowMs, SWEEP_BATCH, now.toISOString())) await sweepOne(row);
   }
