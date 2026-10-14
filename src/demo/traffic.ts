@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS agent_requests (
 CREATE INDEX IF NOT EXISTS agent_requests_at ON agent_requests (at_ms);
 `;
 
+/** Never recorded, and skipped in the feed for rows stored before that rule. */
+const HIDDEN_OUTCOME = "invalid_request";
+const SHOWN = `outcome != '${HIDDEN_OUTCOME}'`;
+
 /** Rows older than this are deleted on each insert pass; the feed looks back 7 days. */
 const KEEP_MS = 30 * 86_400_000;
 
@@ -102,11 +106,14 @@ export class AgentTraffic {
       };
       res.on("finish", () => {
         try {
+          const outcome = outcomeOf(res.statusCode, body);
+          // A malformed request is noise on a public showcase, not agent activity.
+          if (outcome === HIDDEN_OUTCOME) return;
           const ua = req.get("user-agent") ?? "";
           this.record({
             vendor: classifyVendor(ua, req.get("x-agent-name")),
             route,
-            outcome: outcomeOf(res.statusCode, body),
+            outcome,
             visitor: this.visitor(clientIp(req, ipOpts), ua),
           });
         } catch (e) {
@@ -122,14 +129,14 @@ export class AgentTraffic {
     const dayStart = DateTime.fromMillis(now, { zone: this.timezone }).startOf("day").toMillis();
     const weekStart = now - 7 * 86_400_000;
     const db = this.store.db;
-    const recent = (db.prepare("SELECT vendor, route, outcome, at_ms FROM agent_requests ORDER BY id DESC LIMIT 10").all() as Record<string, unknown>[]).map(
+    const recent = (db.prepare(`SELECT vendor, route, outcome, at_ms FROM agent_requests WHERE ${SHOWN} ORDER BY id DESC LIMIT 10`).all() as Record<string, unknown>[]).map(
       (r): FeedItem => ({ vendor: feedVendor(r.vendor as string), route: r.route as RouteKind, outcome: r.outcome as string, at: new Date(Number(r.at_ms)).toISOString() }),
     );
     const span = (since: number) => {
-      const rows = db.prepare("SELECT vendor, COUNT(*) AS n FROM agent_requests WHERE at_ms >= ? GROUP BY vendor").all(since) as { vendor: Vendor; n: number }[];
+      const rows = db.prepare(`SELECT vendor, COUNT(*) AS n FROM agent_requests WHERE at_ms >= ? AND ${SHOWN} GROUP BY vendor`).all(since) as { vendor: Vendor; n: number }[];
       // A visitor id is per UTC day, so a week counts one agent once per day it called.
       const agents = db
-        .prepare("SELECT COUNT(*) AS n FROM (SELECT DISTINCT visitor, at_ms / 86400000 AS d FROM agent_requests WHERE at_ms >= ?)")
+        .prepare(`SELECT COUNT(*) AS n FROM (SELECT DISTINCT visitor, at_ms / 86400000 AS d FROM agent_requests WHERE at_ms >= ? AND ${SHOWN})`)
         .get(since) as { n: number };
       const by_vendor = byVendor(rows);
       return { agents: Number(agents.n), requests: Object.values(by_vendor).reduce((a, b) => a + b, 0), by_vendor };

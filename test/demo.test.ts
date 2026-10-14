@@ -62,6 +62,7 @@ describe("demo mode over HTTP", () => {
     expect(b.status).toBe(201);
     expect([...fake.events.values()][0]!.title).toMatch(/^\[demo\] Bath and brush - Ann Lee$/);
     await post("/api/cancel", { booking_id: "b_nope", phone: CUSTOMER.phone }, { "user-agent": "Claude-User" });
+    await post("/api/book", { quote_id: "q_x" }); // invalid_request: never shown
 
     const res = await fetch(`${base}/demo/feed`);
     const text = await res.text();
