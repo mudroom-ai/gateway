@@ -208,6 +208,12 @@ dialog[open]{animation:pop 260ms cubic-bezier(.2,.9,.3,1.2)}
 .modal ol>li::before{content:counter(s);display:grid;place-items:center;width:1.6rem;height:1.6rem;border-radius:50%;border:1px solid var(--border-strong);font-size:.75rem;font-weight:500;color:var(--text)}
 .modal ol>li b{color:var(--text);font-weight:550}
 .prompt{position:relative;margin-top:.6rem;padding:.9rem 1rem;border:1px solid var(--border);border-radius:10px;background:var(--surface);font-size:.9rem;line-height:1.55;color:var(--text);overflow-wrap:anywhere}
+.prompt{padding-right:2.6rem}
+.prompt-copy{position:absolute;top:.45rem;right:.45rem;display:grid;place-items:center;width:1.9rem;height:1.9rem;border:1px solid var(--border);border-radius:7px;background:var(--background);color:var(--muted);cursor:pointer;opacity:0;transition:opacity 140ms ease,color 140ms ease}
+.prompt:hover .prompt-copy,.prompt-copy:focus-visible{opacity:1}
+.prompt-copy:hover{color:var(--text);background:var(--hover)}
+.prompt-copy:focus{outline:none}.prompt-copy:focus-visible{outline:1px solid var(--text);outline-offset:2px}
+@media (hover:none){.prompt-copy{opacity:1}}
 .chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.55rem}
 .chip{font-size:.8125rem;padding:.2rem .6rem;border:1px solid var(--border);border-radius:999px;color:var(--text)}
 .note{margin:1.2rem 0 0;padding:.8rem 1rem;border-radius:10px;background:var(--surface);font-size:.8125rem;line-height:1.5;color:var(--muted)}
@@ -290,7 +296,7 @@ ${ask}
     <h2 id="welcome-title">Send your AI agent shopping</h2>
     <p class="lede">This shop takes bookings from AI agents, and a human owner answers their questions. Try it with yours.</p>
     <ol>
-      <li><div><b>Copy this prompt</b><div class="prompt" id="prompt">${esc(prompt)}</div></div></li>
+      <li><div><b>Copy this prompt</b><div class="prompt"><span id="prompt">${esc(prompt)}</span><button type="button" class="prompt-copy" data-copy-main aria-label="Copy prompt" title="Copy prompt"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></li>
       <li><div><b>Paste it into your agent</b><div class="chips"><span class="chip">Muse</span><span class="chip">GrokBot</span></div></div></li>
       <li><div><b>Watch it happen</b><br>Its requests show up under Live activity as they happen.</div></li>
     </ol>
@@ -320,7 +326,7 @@ function open(){if(dlg.showModal&&!dlg.open)dlg.showModal()}
 document.querySelectorAll("[data-open]").forEach(function(b){b.addEventListener("click",open)});
 document.querySelectorAll("[data-close]").forEach(function(b){b.addEventListener("click",function(){dlg.close()})});
 dlg.addEventListener("click",function(e){if(e.target===dlg)dlg.close()});
-document.querySelector("[data-copy-main]").addEventListener("click",function(){copy(document.getElementById("prompt").textContent)});
+document.querySelectorAll("[data-copy-main]").forEach(function(b){b.addEventListener("click",function(){copy(document.getElementById("prompt").textContent)})});
 document.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click",function(){copy(b.getAttribute("data-copy"))})});
 open();
 function el(tag,text,cls){var e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e}
