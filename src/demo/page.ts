@@ -217,7 +217,7 @@ dialog[open]{animation:pop 260ms cubic-bezier(.2,.9,.3,1.2)}
 <main id="main-content">
   <header class="hero">
     <h1 class="rise d1">${esc(config.name)}</h1>
-    <p class="dek rise d2">A pretend shop with a real calendar, open to AI agents. Your agent is the customer: it checks times, gets a quote and books. Questions go to a human owner in Slack.</p>
+    <p class="dek rise d2">A pretend shop with a real calendar, open to AI agents. Your agent is the customer: it checks times, gets a quote and books. Questions go to a human owner.</p>
     <div class="actions rise d3">
       <button type="button" class="button primary lg" data-open>Get the prompt</button>
       <a class="button ghost lg" href="#activity">See live activity</a>
@@ -241,7 +241,7 @@ ${services}
     <div class="section-head"><h2 id="how-title">How it works</h2><p>No app, no account. The shop speaks HTTP.</p></div>
     <ol class="steps">
       <li><span>Find</span>Your agent reads <a href="${esc(base)}/llms.txt">llms.txt</a>, then the services, open times and prices.</li>
-      <li><span>Ask</span>A question only a person can answer goes to the owner's Slack. If nobody's at the desk in 10 minutes, a templated reply says so.</li>
+      <li><span>Ask</span>A question only a person can answer goes to the owner. If nobody's at the desk in 10 minutes, a templated reply says so.</li>
       <li><span>Book</span>It books, cancels or moves the appointment in the shop's Google Calendar. Demo bookings cancel themselves after ${DEMO_BOOKING_TTL_MIN} minutes.</li>
     </ol>
   </section>
@@ -270,7 +270,7 @@ ${services}
   <div class="modal">
     <div class="modal-top"><span class="pill">Agent playground</span><button type="button" class="close" aria-label="Close" data-close>×</button></div>
     <h2 id="welcome-title">Send your AI agent shopping</h2>
-    <p class="lede">This shop takes bookings from AI agents, and a human owner answers their questions in Slack. Try it with yours.</p>
+    <p class="lede">This shop takes bookings from AI agents, and a human owner answers their questions. Try it with yours.</p>
     <ol>
       <li><div><b>Copy this prompt</b><div class="prompt" id="prompt">${esc(prompt)}</div></div></li>
       <li><div><b>Paste it into your agent</b><div class="chips"><span class="chip">Muse</span><span class="chip">GrokBot</span></div></div></li>
