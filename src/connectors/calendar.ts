@@ -138,7 +138,7 @@ export function newEvent(req: BookingRequest) {
       c.notes ? `Notes: ${c.notes}` : "",
       `Price: ${(req.price_cents / 100).toFixed(2)} ${req.currency}`,
       `Booking: ${req.booking_id} (quote ${req.quote_id})`,
-      "Booked by gateway",
+      "Booked by Mudroom",
     ]
       .filter(Boolean)
       .join("\n"),

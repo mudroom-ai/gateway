@@ -100,7 +100,7 @@ export function channelEnvLines(a: ChannelAnswers, kv: (k: string, v: string) =>
   if (a.whatsapp) {
     lines.push(
       "# Owner channel (WhatsApp, Meta Cloud API): agent messages and booking notices on your phone; reply by quoting the message.",
-      `# Meta must call ${WHATSAPP_WEBHOOK_PATH} on this gateway's public URL with the verify token below.`,
+      `# Meta must call ${WHATSAPP_WEBHOOK_PATH} on this Mudroom server's public URL with the verify token below.`,
       kv("OWNER_PHONE", a.whatsapp.phone),
       kv("WHATSAPP_ACCESS_TOKEN", a.whatsapp.accessToken),
       kv("WHATSAPP_PHONE_NUMBER_ID", a.whatsapp.phoneNumberId),
@@ -206,7 +206,7 @@ export const CHANNEL_GUIDES: Record<"slack" | "whatsapp" | "twilio", SetupGuide>
     steps: [
       "Create a Meta app at https://developers.facebook.com/apps with the WhatsApp product; on WhatsApp -> API Setup add your own number under To and copy the Phone number ID and the access token",
       "Copy the App Secret from App settings -> Basic",
-      "Your gateway needs a public HTTPS URL: Meta calls it at /webhooks/whatsapp (the wizard prints the URL and verify token to paste into WhatsApp -> Configuration -> Webhook)",
+      "Your Mudroom server needs a public HTTPS URL: Meta calls it at /webhooks/whatsapp (the wizard prints the URL and verify token to paste into WhatsApp -> Configuration -> Webhook)",
     ],
   },
   twilio: {
@@ -327,7 +327,7 @@ export function whatsappWebhookLines(a: WhatsappAnswer, publicUrl: string | unde
     "In your Meta app, open WhatsApp -> Configuration -> Webhook and set:",
     `  Callback URL:  ${base}${WHATSAPP_WEBHOOK_PATH}`,
     `  Verify token:  ${a.verifyToken}`,
-    "then click Verify and save, and subscribe to the \"messages\" field. The gateway must be running at that URL when you click Verify.",
+    "then click Verify and save, and subscribe to the \"messages\" field. Mudroom must be running at that URL when you click Verify.",
   ];
 }
 

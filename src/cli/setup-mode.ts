@@ -19,6 +19,6 @@ export type SetupMode = "terminal" | "web";
 
 /** Default is the terminal, so Enter keeps the wizard where it has always run. */
 export async function askSetupMode(p: Prompter): Promise<SetupMode> {
-  const i = await p.choose("How do you want to set up Gateway?", [...SETUP_MODE_ITEMS], 0, SETUP_MODE_DESCRIPTION);
+  const i = await p.choose("How do you want to set up Mudroom?", [...SETUP_MODE_ITEMS], 0, SETUP_MODE_DESCRIPTION);
   return i === 1 ? "web" : "terminal";
 }

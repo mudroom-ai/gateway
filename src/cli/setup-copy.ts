@@ -29,7 +29,7 @@ export function connectionNotes(guide: SetupGuide, port: number): SetupNote[] {
     whatsapp: [
       { label: "Create a Meta app with the WhatsApp product", detail: "WhatsApp → API Setup: add your own number under “To”, then copy the Phone number ID and the access token." },
       { label: "Copy the App Secret", detail: "App settings → Basic." },
-      { label: "Have a public HTTPS URL for the gateway", detail: "Meta calls it at `/webhooks/whatsapp`; the summary prints the URL and verify token to paste into WhatsApp → Configuration → Webhook." },
+      { label: "Have a public HTTPS URL for Mudroom", detail: "Meta calls it at `/webhooks/whatsapp`; the summary prints the URL and verify token to paste into WhatsApp → Configuration → Webhook." },
     ],
     twilio: [
       { label: "Copy your Account SID and Auth Token" },

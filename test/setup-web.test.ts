@@ -173,7 +173,7 @@ describe("browser setup", () => {
 
       const page = await fetch(session.url);
       expect(page.status).toBe(200);
-      expect(await page.text()).toContain("Gateway setup");
+      expect(await page.text()).toContain("Mudroom setup");
       const css = await fetch(new URL("app.css", session.url));
       expect(await css.text()).toContain("--background: #ffffff");
       const origin = `http://127.0.0.1:${new URL(session.url).port}`;

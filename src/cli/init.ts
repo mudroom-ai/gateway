@@ -91,7 +91,7 @@ export const GOOGLE_SETUP_STEPS = [
 
 /** Printed before the first question of a first run (no saved config.json or .env). */
 export const INTRO = [
-  "Gateway",
+  "Mudroom",
   "Lets AI agents book with your business over plain HTTP.",
   "It sits in front of the calendar or booking system you already use.",
   "",
@@ -179,7 +179,7 @@ Options (env fallback in brackets, used with --non-interactive):
                            (default: "${DEFAULT_HOURS}")
   --google-key-file <path> Service account JSON key [GOOGLE_SERVICE_ACCOUNT_FILE]
   --calendar-id <id>       Google Calendar ID [GOOGLE_CALENDAR_ID]
-  --no-backend             Write config and .env without a booking system; the gateway will not start until one is set
+  --no-backend             Write config and .env without a booking system; Mudroom will not start until one is set
                            (alias: --skip-google)
   --write-test             Create and delete a test event to prove write access (Google)
   --square                 Use Square Appointments instead of Google. Interactive: runs the OAuth flow
@@ -483,7 +483,7 @@ export function buildEnvFile(backend: Backend | undefined, port: number, carried
     lines.push(`SQUARE_ENV=${backend.env}`, kv("SQUARE_ACCESS_TOKEN", backend.accessToken), kv("SQUARE_LOCATION_ID", backend.locationId));
     if (backend.refreshToken && backend.appId && backend.appSecret) {
       lines.push(
-        "# With these three the gateway renews the 30-day access token by itself.",
+        "# With these three Mudroom renews the 30-day access token by itself.",
         kv("SQUARE_REFRESH_TOKEN", backend.refreshToken),
         kv("SQUARE_APP_ID", backend.appId),
         kv("SQUARE_APP_SECRET", backend.appSecret),
@@ -493,7 +493,7 @@ export function buildEnvFile(backend: Backend | undefined, port: number, carried
     }
   } else {
     lines.push(
-      "# No booking system yet: the gateway refuses to start until one is set.",
+      "# No booking system yet: Mudroom refuses to start until one is set.",
       "# GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/key.json",
       "# GOOGLE_CALENDAR_ID=owner@example.com",
       "# or run `npm run init -- --square` for Square Appointments.",
@@ -531,7 +531,7 @@ export async function writeTest(c: InitConnector, calendarId: string, timezone: 
   const id = `init${base32hex(createHash("sha256").update(`${calendarId}\u0000${start.toISO()}`).digest()).slice(0, 26)}`;
   const when = start.toFormat("yyyy-MM-dd HH:mm ZZZZ");
   try {
-    await c.insertEvent({ id, start: start.toISO()!, end: end.toISO()!, title: "gateway setup test (safe to delete)", description: "Created and deleted by npm run init." });
+    await c.insertEvent({ id, start: start.toISO()!, end: end.toISO()!, title: "Mudroom setup test (safe to delete)", description: "Created and deleted by npm run init." });
   } catch (e) {
     if (e instanceof ConnectorError && e.code === "calendar_auth_failed") {
       return { ok: false, message: `Write test FAILED: the service account can read but not create events. Change its permission to "Make changes to events". (${e.message})` };
@@ -540,7 +540,7 @@ export async function writeTest(c: InitConnector, calendarId: string, timezone: 
       // The insert may still have landed (e.g. timeout); try to clean up below either way.
       const cleanup = await c.deleteEvent(id).then(
         () => "",
-        () => ` If an event "gateway setup test" appears on ${when}, delete it.`,
+        () => ` If an event "Mudroom setup test" appears on ${when}, delete it.`,
       );
       return { ok: false, message: `Write test FAILED: ${(e as Error).message}.${cleanup}` };
     }
@@ -548,7 +548,7 @@ export async function writeTest(c: InitConnector, calendarId: string, timezone: 
   try {
     await c.deleteEvent(id);
   } catch (e) {
-    return { ok: false, message: `Write test created the test event but could NOT delete it (${(e as Error).message}). Delete "gateway setup test" on ${when} by hand.` };
+    return { ok: false, message: `Write test created the test event but could NOT delete it (${(e as Error).message}). Delete "Mudroom setup test" on ${when} by hand.` };
   }
   return { ok: true, message: "Write test passed: created and deleted a test event." };
 }
@@ -800,16 +800,16 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   const startSteps = () =>
     nextSteps(
       [
-        ["Go to your gateway folder", cmd(`cd ${dir}`)],
+        ["Go to your Mudroom folder", cmd(`cd ${dir}`)],
         [
           `Open a tunnel so Muse or Grok can reach it ${style.dim("(skip if you only call it locally)")}`,
           cmd(`cloudflared tunnel --url http://localhost:${port}`),
           note("install: brew install cloudflared, or https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"),
-          note("ChatGPT and Claude.ai don't work through a tunnel; host the gateway on a real domain for them (docs/deploy.md)"),
+          note("ChatGPT and Claude.ai don't work through a tunnel; host Mudroom on a real domain for them (docs/deploy.md)"),
           "     It prints https://<tunnel-host>.trycloudflare.com. Add that host to .env:",
           cmd("ALLOWED_HOSTS=<tunnel-host>.trycloudflare.com,localhost,127.0.0.1"),
         ],
-        ["Start the gateway", cmd("npm start"), "     Check it locally:", cmd(`curl localhost:${port}/api/services`)],
+        ["Start Mudroom", cmd("npm start"), "     Check it locally:", cmd(`curl localhost:${port}/api/services`)],
         ["Point your agent at the entry page", cmd("https://<tunnel-host>.trycloudflare.com")],
       ],
       "Details: docs/deploy.md",
@@ -818,7 +818,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   const setupSteps = (g: SetupGuide) =>
     nextSteps(
       [
-        ["Go to your gateway folder", cmd(`cd ${dir}`)],
+        ["Go to your Mudroom folder", cmd(`cd ${dir}`)],
         [`Set up ${g.label}`, ...g.steps.map((st, i) => `       ${String.fromCharCode(97 + i)}. ${st}`), note(`Guide: ${docUrl(g.doc)}`), note(`       (local copy: docs/connectors/${g.doc}.md)`)],
         [`Run the wizard again ${style.dim("(it keeps your answers; press Enter through them)")}`, cmd("npm run init")],
       ],
@@ -942,7 +942,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
             if (savedEnv?.PORT && !f.port && !env.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
             log("\nKept your setup; nothing was changed.");
             if (connected) log(startSteps());
-            else log("No booking system is connected yet, so the gateway will not start. Run `npm run init` again and pick \"Review and update\" to connect one.");
+            else log("No booking system is connected yet, so Mudroom will not start. Run `npm run init` again and pick \"Review and update\" to connect one.");
             return await finish(0);
           }
           if (existing === EXISTING_RESET) saved = savedEnv = undefined;
@@ -953,7 +953,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         // supplies the lowest default of a question below; nothing from it is written without passing a prompt.
         let site: Awaited<ReturnType<typeof askWebsite>>;
         if (saved || savedEnv) {
-          log("gateway setup. Press Enter to keep each saved answer.\n");
+          log("Mudroom setup. Press Enter to keep each saved answer.\n");
           if (f.website !== undefined) log('Note: --website is only used on a first run or after "Start over".\n');
         } else {
           log(`${style.question(INTRO[0]!)}\n${INTRO.slice(1).join("\n")}\n`);
@@ -974,7 +974,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         const vendorSystem = !vendor || systemFlagged || systemKnown.some(Boolean) ? undefined : vendor.kind === "square" ? 1 : vendor.kind === "glossgenius" ? 2 : undefined;
         if (vendorSystem !== undefined) log(`Your site books through ${vendorLabel}, so it is selected below.\n`);
         else if (vendor && vendor.kind !== "square" && vendor.kind !== "glossgenius") {
-          log(`Your site books through ${vendorLabel}, which Gateway cannot connect to yet. Agents can still book into a Google Calendar and message you.\n`);
+          log(`Your site books through ${vendorLabel}, which Mudroom cannot connect to yet. Agents can still book into a Google Calendar and message you.\n`);
         }
         const system = await p.choose(
           "Booking system",
@@ -1123,7 +1123,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
             log("");
             loc = active[await p.choose("Book at location", active.map((l) => ({ emoji: "📍", label: l.name, status: l.id + (l.timezone ? `, ${l.timezone}` : "") })))]!;
           }
-          if (loc.timezone && loc.timezone !== timezone) log(`Note: Square has this location in ${loc.timezone}; the gateway will use ${timezone}.`);
+          if (loc.timezone && loc.timezone !== timezone) log(`Note: Square has this location in ${loc.timezone}; Mudroom will use ${timezone}.`);
           backend = { kind: "square", env: sqEnv, accessToken: tokens.accessToken, locationId: loc.id, refreshToken: tokens.refreshToken, appId, appSecret };
         } else if (useGlossGenius) {
           if (!guided) log(style.dim("\nGlossGenius: open GlossGenius -> Online Booking -> Share booking link, and copy the https://<yourname>.glossgenius.com link."));
@@ -1178,12 +1178,12 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
     keptBackend = !backend && hasSavedBackend(carried);
     if (backend?.slack) {
       log(`Slack owner channel on: agent messages and booking notices go to channel ${backend.slack.channelId}.`);
-      if (backend.whatsapp) log("WhatsApp is set too; the gateway uses Slack and ignores the WHATSAPP_* vars.");
-      if (backend.owner) log("Twilio is set too; the gateway uses Slack and ignores the TWILIO_* vars.");
+      if (backend.whatsapp) log("WhatsApp is set too; Mudroom uses Slack and ignores the WHATSAPP_* vars.");
+      if (backend.owner) log("Twilio is set too; Mudroom uses Slack and ignores the TWILIO_* vars.");
       await checkSlack(backend.slack, makeSlack, log);
     } else if (backend?.whatsapp) {
       log(`WhatsApp owner channel on: agent messages and booking notices go to ${maskPhone(backend.whatsapp.phone)}.`);
-      if (backend.owner) log("Twilio is set too; the gateway uses WhatsApp and ignores the TWILIO_* vars.");
+      if (backend.owner) log("Twilio is set too; Mudroom uses WhatsApp and ignores the TWILIO_* vars.");
       await checkWhatsapp(backend.whatsapp, makeWhatsapp, log);
       log("");
       whatsappWebhookLines(backend.whatsapp, env.PUBLIC_URL ?? savedEnv?.PUBLIC_URL).forEach((l) => log(l));
@@ -1194,9 +1194,9 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
     if (keptBackend) {
       log("\nKept the booking system settings already in .env; `npm start` checks access when it starts.");
     } else if (!backend && planned) {
-      log(`\n${SETUP_GUIDES[planned](callbackPort).label} is not connected yet, so the gateway will not start.`);
+      log(`\n${SETUP_GUIDES[planned](callbackPort).label} is not connected yet, so Mudroom will not start.`);
     } else if (!backend) {
-      log("\nWARNING: no booking system configured. The gateway will not start until GOOGLE_SERVICE_ACCOUNT_FILE and");
+      log("\nWARNING: no booking system configured. Mudroom will not start until GOOGLE_SERVICE_ACCOUNT_FILE and");
       log("GOOGLE_CALENDAR_ID (or SQUARE_ACCESS_TOKEN and SQUARE_LOCATION_ID, or GLOSSGENIUS_BOOKING_URL plus the Google pair)");
       log("are set in .env. Re-run `npm run init` to connect one.");
     } else if (backend.kind === "square") {

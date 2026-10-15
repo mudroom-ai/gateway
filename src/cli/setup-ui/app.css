@@ -6,7 +6,7 @@
   font-display: swap;
 }
 
-/* Tokens shared with the Gateway landing page (mudroom-landing/src/styles.css). */
+/* Tokens shared with the Mudroom landing page (mudroom-landing/src/styles.css). */
 :root, :root[data-theme="light"] {
   --background: #ffffff;
   --surface: #fafafa;

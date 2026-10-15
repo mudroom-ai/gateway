@@ -246,7 +246,7 @@ export class SquareConnector implements BookingConnector {
       ...(rest.length ? { family_name: rest.join(" ") } : {}),
       ...(c.email ? { email_address: c.email } : {}),
       ...(phone ? { phone_number: phone } : {}),
-      note: "Created by gateway",
+      note: "Created by Mudroom",
     });
     if (res.status >= 300) {
       const code = firstCode(res);
@@ -423,7 +423,7 @@ function shortKey(s: string): string {
 }
 
 function note(req: BookingRequest): string {
-  const lines = [req.customer.notes ?? "", `Booked via gateway (ref ${req.booking_id})`].filter(Boolean);
+  const lines = [req.customer.notes ?? "", `Booked via Mudroom (ref ${req.booking_id})`].filter(Boolean);
   return lines.join("\n").slice(0, 4096);
 }
 

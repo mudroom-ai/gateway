@@ -132,7 +132,7 @@ export async function askWebsite(
   }
   const store = !!vendor && STORE_VENDORS.has(vendor.kind);
   log("\nTo turn them into answers, the text of those public pages is sent to the provider you choose below.");
-  log("Gateway saves nothing from this step; what comes back only becomes the default answer to the questions that follow.");
+  log("Mudroom saves nothing from this step; what comes back only becomes the default answer to the questions that follow.");
   if (store) log(style.dim(`${vendorLabel} supplies your services and hours, so this would only fill in your name, time zone and currency.`));
   const items: PickItem[] = [
     ...candidates.map((c) => ({ emoji: "🤖", label: c.label, status: c.status })),
@@ -197,7 +197,7 @@ export async function askWebsite(
   );
   const notes: string[] = [];
   if (profile.products.length) {
-    notes.push(profile.shop && !fixed && !other ? "This looks like an online shop. Gateway books appointments, so its products were not added." : "Gateway books appointments, so products for sale were not added.");
+    notes.push(profile.shop && !fixed && !other ? "This looks like an online shop. Mudroom books appointments, so its products were not added." : "Mudroom books appointments, so products for sale were not added.");
   }
   if (defaults.length) notes.push(`Offered as ${defaults.length === 1 ? "a default" : "defaults"} below: ${listed(defaults)}. Enter keeps ${defaults.length === 1 ? "it" : "one"}, typing replaces it.`);
   if (other && !store) notes.push("Services without a fixed price are shown for a yes or no: agents can ask you about them but not book them.");

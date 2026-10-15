@@ -259,7 +259,7 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
           const active = locations.filter((l) => l.status !== "INACTIVE");
           if (!active.length) throw new Error("This Square account has no active locations.");
           square = { key, tokens, locations: active };
-        }, ["Authorize Gateway in Square to choose a booking location."], false);
+        }, ["Authorize Mudroom in Square to choose a booking location."], false);
         if (square?.key === key) {
           if (square.locations.length > 1) choose("square-location", "Book at location", square.locations.map((l) => ({ label: l.name, status: l.id })));
           const location = square.locations[Math.min(square.locations.length - 1, number("square-location"))]!;

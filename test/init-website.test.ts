@@ -333,7 +333,7 @@ describe("init wizard: website step", () => {
     expect(r.prompter.remaining).toBe(0);
     expect(r.out).toContain("  Services: 1 listed, none with a fixed price");
     expect(r.out).toContain("  Products: 2 left out (Tote Bag, Kitten Heels)");
-    expect(r.out).toContain("Gateway books appointments, so products for sale were not added.");
+    expect(r.out).toContain("Mudroom books appointments, so products for sale were not added.");
     expect(r.out).toContain("Offered as defaults below: name and currency. Enter keeps one, typing replaces it.");
     expect(r.out).toContain("Nothing is connected for now.");
     expect(r.out).toContain("Your site lists a service the wizard could not read one fixed price for:\n  - Bag Repair (from $20)");
@@ -346,7 +346,7 @@ describe("init wizard: website step", () => {
     const only = await wizard([], ["example.com", "", "", "", NOT_YET, "", "", ""], shop(rows.slice(0, 2), bags));
     expect(only.code).toBe(0);
     expect(only.prompter.remaining).toBe(0);
-    expect(only.out).toContain("This looks like an online shop. Gateway books appointments, so its products were not added.");
+    expect(only.out).toContain("This looks like an online shop. Mudroom books appointments, so its products were not added.");
     expect(only.prompter.prompts.some((q) => q.startsWith("  Service") || q.startsWith("List them") || q.startsWith("Hours"))).toBe(false);
   });
 

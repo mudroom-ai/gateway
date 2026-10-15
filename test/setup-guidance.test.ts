@@ -67,7 +67,7 @@ describe("wizard guidance", () => {
       "",
       "Next steps:",
       "",
-      "  1. Go to your gateway folder",
+      "  1. Go to your Mudroom folder",
       "       cd /Users/dennischia/projects/agent-gateway",
       "",
       "  2. Open a tunnel so Muse or Grok can reach it (skip if you only call it locally)",
@@ -77,7 +77,7 @@ describe("wizard guidance", () => {
       "     It prints https://<tunnel-host>.trycloudflare.com. Add that host to .env:",
       "       ALLOWED_HOSTS=<tunnel-host>.trycloudflare.com,localhost,127.0.0.1",
       "",
-      "  3. Start the gateway",
+      "  3. Start Mudroom",
       "       npm start",
       "     Check it locally:",
       "       curl localhost:3000/api/services",
@@ -89,7 +89,7 @@ describe("wizard guidance", () => {
     ].join("\n"));
     appendLog([
       "Next steps:",
-      "  1. Go to your gateway folder",
+      "  1. Go to your Mudroom folder",
       "       cd /tmp/gw",
       "  2. Set up Google Calendar",
       "       a. Enable the API",
