@@ -55,6 +55,10 @@ Connectors come in three modules. A **Store** is a booking platform that owns it
 
 Adding a connector: [docs/connectors/README.md](docs/connectors/README.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Roadmap
+
+See [the Mudroom roadmap](https://mudroom.dev/roadmap) for planned connectors, improvements to WhatsApp conversations, and hosted Mudroom.
+
 ## Docs
 
 - [docs/install.md](docs/install.md): installer, wizard, manual install, updating
