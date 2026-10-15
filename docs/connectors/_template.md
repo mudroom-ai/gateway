@@ -18,7 +18,7 @@ What an agent can do end to end (find slots, quote, book, cancel, reschedule) an
 
 ## Limitations
 
-Platform rules the gateway cannot work around.
+Platform rules Mudroom cannot work around.
 
 ## Errors
 

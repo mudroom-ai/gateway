@@ -2,7 +2,7 @@
 
 ## Overview
 
-A **BookingConnector** (`src/connectors/square.ts`, OAuth helpers in `square-oauth.ts`). The gateway sits in front of Square Appointments: services and prices come from Square's catalog, availability from Square's search, and bookings are created, moved and cancelled in Square. The rules engine is bypassed (`pricesServices = true`) and quotes carry Square's price.
+A **BookingConnector** (`src/connectors/square.ts`, OAuth helpers in `square-oauth.ts`). Mudroom sits in front of Square Appointments: services and prices come from Square's catalog, availability from Square's search, and bookings are created, moved and cancelled in Square. The rules engine is bypassed (`pricesServices = true`) and quotes carry Square's price.
 
 It uses **buyer-level** access, which works on Square's free plan: it does what a customer could do through the merchant's own Square booking page, attaches each booking to a Square customer record, and never touches payments.
 
@@ -39,7 +39,7 @@ It cannot:
 
 - Book services with a **variable price** (skipped with a startup warning) or a **no-show fee** (Square refuses at booking time).
 - Take payments or deposits.
-- Match an existing Square customer by phone or email, because the gateway cannot verify contacts. Merge duplicates in Square.
+- Match an existing Square customer by phone or email, because Mudroom cannot verify contacts. Merge duplicates in Square.
 - Change the team member on reschedule (buyer-level apps may move the start only).
 
 ## Limitations
@@ -47,7 +47,7 @@ It cannot:
 - Customers **must give a phone number**; email alone is refused. `llms.txt` tells agents.
 - Square validates contacts against real numbering plans and mail domains. Reserved ranges (UK `07700 900xxx`) and `example.com` are rejected. Docs and tests use `+1 202 555 0199`.
 - Cancel and reschedule outside the merchant's policy window are refused by Square.
-- The access token lives 30 days. Without `SQUARE_REFRESH_TOKEN`, `SQUARE_APP_ID` and `SQUARE_APP_SECRET` the gateway cannot renew it and `npm run init` must be run again.
+- The access token lives 30 days. Without `SQUARE_REFRESH_TOKEN`, `SQUARE_APP_ID` and `SQUARE_APP_SECRET` Mudroom cannot renew it and `npm run init` must be run again.
 
 ## Errors
 
@@ -67,7 +67,7 @@ It cannot:
 | `SQUARE_ACCESS_TOKEN` | Buyer-level access token. When set, Square is the booking system and `GOOGLE_*` is ignored. |
 | `SQUARE_LOCATION_ID` | The location to book at. |
 | `SQUARE_ENV` | `production` (default) or `sandbox`. |
-| `SQUARE_REFRESH_TOKEN`, `SQUARE_APP_ID`, `SQUARE_APP_SECRET` | Written by `npm run init`. With all three the gateway renews the 30-day access token itself. |
+| `SQUARE_REFRESH_TOKEN`, `SQUARE_APP_ID`, `SQUARE_APP_SECRET` | Written by `npm run init`. With all three Mudroom renews the 30-day access token itself. |
 
 ## Tests
 

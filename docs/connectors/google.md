@@ -2,15 +2,15 @@
 
 ## Overview
 
-A **CalendarConnector** (`src/connectors/google.ts`). It reads free/busy and creates, fetches and deletes events in one Google Calendar through a **service account**. The gateway's own slot engine and rules engine build the slots and prices (`config.json` services, hours, discounts), so Google only supplies busy time and stores the bookings. `calendar.ts` adapts it to the BookingConnector contract the core operations use.
+A **CalendarConnector** (`src/connectors/google.ts`). It reads free/busy and creates, fetches and deletes events in one Google Calendar through a **service account**. Mudroom's own slot engine and rules engine build the slots and prices (`config.json` services, hours, discounts), so Google only supplies busy time and stores the bookings. `calendar.ts` adapts it to the BookingConnector contract the core operations use.
 
-Pick this connector when the merchant's Google Calendar is the source of truth for their time. Do not use it when a scheduler syncs into Google through a delayed feed (GlossGenius is the known case): the gateway can then double-book in both directions. See [deploy.md §6](../deploy.md#6-unsafe-calendar-sources-delayed-feed-schedulers).
+Pick this connector when the merchant's Google Calendar is the source of truth for their time. Do not use it when a scheduler syncs into Google through a delayed feed (GlossGenius is the known case): Mudroom can then double-book in both directions. See [deploy.md §6](../deploy.md#6-unsafe-calendar-sources-delayed-feed-schedulers).
 
 ## Prerequisites
 
 - Self-hoster: a Google Cloud project with the **Google Calendar API** enabled and permission to create a service account key. Newer organizations block key creation (`iam.disableServiceAccountKeyCreation`); an org policy admin must override it, or use a project under a personal account.
 - Merchant: a Google Calendar they can share. On Google Workspace the admin must allow external sharing with "Share all information, and outsiders can change calendars".
-- At least one service in `config.json` (the gateway refuses to start with none in Google mode).
+- At least one service in `config.json` (Mudroom refuses to start with none in Google mode).
 
 ## Setup
 
@@ -31,7 +31,7 @@ An agent can, end to end:
 
 - **Find slots** for a service inside a window up to 14 days, priced by the merchant's rules (hours, buffers, blackout days, discounts, price floor).
 - **Quote** one slot and get a `quote_id` that holds the price until `expires_at`.
-- **Book** a quote with a name plus phone or email. The gateway re-checks free/busy, inserts an event with a deterministic id, and retries with the same `idempotency_key` return the same booking.
+- **Book** a quote with a name plus phone or email. Mudroom re-checks free/busy, inserts an event with a deterministic id, and retries with the same `idempotency_key` return the same booking.
 - **Cancel** with `booking_id` plus the contact. The event is deleted; a missing event counts as cancelled.
 - **Reschedule** to a fresh quote for the same service; the `booking_id` stays the same.
 
@@ -39,13 +39,13 @@ It cannot:
 
 - Take payments, deposits or no-show fees.
 - See or change events the merchant created by hand beyond treating them as busy.
-- Book across more than one calendar or team member; one gateway serves one calendar.
+- Book across more than one calendar or team member; one Mudroom server serves one calendar.
 
 ## Limitations
 
 - Quotes do not hold slots. Two agents booking the same slot at the same moment can both pass the free/busy re-check (a per-merchant lock is planned).
 - Google's free/busy can lag a just-inserted event by a few seconds.
-- **Delayed-feed schedulers are unsafe sources.** The gateway trusts the busy times in Google Calendar. If the merchant's real booking system syncs to Google through a delayed iCal feed (GlossGenius is the known case, with lag up to 24 hours), the gateway can double-book in both directions. Use it only where Google Calendar is the source of truth. See [deploy.md §6](../deploy.md#6-unsafe-calendar-sources-delayed-feed-schedulers).
+- **Delayed-feed schedulers are unsafe sources.** Mudroom trusts the busy times in Google Calendar. If the merchant's real booking system syncs to Google through a delayed iCal feed (GlossGenius is the known case, with lag up to 24 hours), Mudroom can double-book in both directions. Use it only where Google Calendar is the source of truth. See [deploy.md §6](../deploy.md#6-unsafe-calendar-sources-delayed-feed-schedulers).
 - Workspace external-sharing settings can take a while to apply after the admin changes them.
 
 ## Errors

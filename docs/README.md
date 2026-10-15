@@ -1,4 +1,4 @@
-# Gateway docs
+# Mudroom docs
 
 - [install.md](install.md): installer, setup wizard, manual install, updating
 - [configuration.md](configuration.md): `config.json` fields and every environment variable
