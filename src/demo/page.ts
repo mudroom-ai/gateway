@@ -286,7 +286,7 @@ ${ask}
 </main>
 
 <footer>
-  <span>Built with <a href="${REPO_URL}">Gateway</a>, open source</span>
+  <span>Built with <a href="${REPO_URL}">Mudroom</a>, open source</span>
   <nav><a href="${esc(base)}/llms.txt">llms.txt</a><a href="${esc(base)}/openapi.json">OpenAPI</a><a href="${REPO_URL}">GitHub</a></nav>
 </footer>
 

@@ -511,7 +511,7 @@ describe("init wizard (interactive)", () => {
     expect(env).toContain("SQUARE_LOCATION_ID='L-UP'");
     expect(env).toContain("SQUARE_ACCESS_TOKEN='at-1'");
     expect(env).toContain("SQUARE_APP_ID='app-1'");
-    expect(logs.join("\n")).toContain("Square has this location in America/New_York; the gateway will use America/Los_Angeles");
+    expect(logs.join("\n")).toContain("Square has this location in America/New_York; Mudroom will use America/Los_Angeles");
   });
 
   // protects: when OAuth succeeds but every Square location is INACTIVE the wizard stops with

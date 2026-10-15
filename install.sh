@@ -10,7 +10,7 @@
 #      (if that fails it stops; config.json, .env and gateway.sqlite are left as they were)
 #   3. npm ci, npm run build, npm prune --omit=dev
 #   4. runs the setup wizard (npm run init) if a terminal is available; the
-#      wizard introduces Gateway, offers to read your website to prefill its
+#      wizard introduces Mudroom, offers to read your website to prefill its
 #      questions (optional: Enter skips, and it asks before sending the page
 #      text to a model), asks what to set up, shows the booking system's
 #      setup guide and prints the next steps. With a config.json already
@@ -33,7 +33,7 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 norm() { printf '%s' "$1" | sed -e 's#/*$##' -e 's#\.git$##'; }
 
 need_node() {
-  say "gateway needs Node.js 22.13 or newer ($1)." >&2
+  say "Mudroom needs Node.js 22.13 or newer ($1)." >&2
   say "Get it from https://nodejs.org/en/download, or with nvm: nvm install 24" >&2
   exit 1
 }
@@ -59,18 +59,18 @@ trailer() {
   say ""
   say "Next steps:"
   say ""
-  say "  1. Go to your gateway folder"
+  say "  1. Go to your Mudroom folder"
   say "       cd $DIR"
   [ -f config.json ] || say "       npm run init        # only if config.json is missing: your website (optional), what agents may do, booking system, business"
   say ""
   say "  2. Open a tunnel so Muse or Grok can reach it (skip if you only call it locally)"
   say "       cloudflared tunnel --url http://localhost:$port"
   say "     install: brew install cloudflared, or https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"
-  say "     ChatGPT and Claude.ai don't work through a tunnel; host the gateway on a real domain for them (docs/deploy.md)"
+  say "     ChatGPT and Claude.ai don't work through a tunnel; host Mudroom on a real domain for them (docs/deploy.md)"
   say "     It prints https://<tunnel-host>.trycloudflare.com. Add that host to .env:"
   say "       ALLOWED_HOSTS=<tunnel-host>.trycloudflare.com,localhost,127.0.0.1"
   say ""
-  say "  3. Start the gateway"
+  say "  3. Start Mudroom"
   say "       npm start"
   say "     Check it locally:"
   say "       curl localhost:$port/api/services"
@@ -120,7 +120,7 @@ main() {
       } || {
         say "" >&2
         say "Your config.json, .env and gateway.sqlite in $DIR were not touched." >&2
-        say "Stop the gateway, then either fix the checkout (git -C $DIR status) or set GATEWAY_DIR to a fresh path," >&2
+        say "Stop Mudroom, then either fix the checkout (git -C $DIR status) or set GATEWAY_DIR to a fresh path," >&2
         say "re-run this script, and copy config.json, .env and gateway.sqlite (plus -wal/-shm if present) into it." >&2
         die "could not update $DIR (could not move to $REF; see the message above)"
       }

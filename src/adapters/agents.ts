@@ -151,7 +151,7 @@ function messagesSection(base: string, svc: string, example: string, mode: Threa
    \`\`\`json
    {"customer": {"name": "Alex Doe", ${example}}, "message": "Do you groom cats? Mine is 12 and needs a vaccination check first.", "service_id": "${svc}"}
    \`\`\`
-   Success is HTTP 201 with \`thread_id\`, \`read_token\` (keep both; the token is shown once), \`poll_after_seconds\` and \`delivery\` (\`delivered\`, or \`queued\` when the owner's channel is briefly down and the gateway is retrying).`;
+   Success is HTTP 201 with \`thread_id\`, \`read_token\` (keep both; the token is shown once), \`poll_after_seconds\` and \`delivery\` (\`delivered\`, or \`queued\` when the owner's channel is briefly down and Mudroom is retrying).`;
   if (mode === "one_way") {
     return `## If you cannot book: leave a message for the owner
 

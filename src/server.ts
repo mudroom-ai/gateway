@@ -148,7 +148,7 @@ export function createConnector(config: Config, settings: RuntimeSettings): Cale
     return glossgenius;
   }
   if (google) {
-    if (!config.services.length) throw new Error("config.json has no services: with Google Calendar the gateway needs at least one (run `npm run init`)");
+    if (!config.services.length) throw new Error("config.json has no services: with Google Calendar Mudroom needs at least one (run `npm run init`)");
     return google;
   }
   throw new Error(
