@@ -1,6 +1,6 @@
-# How agents use the gateway
+# How agents use Mudroom
 
-AI agents discover and book appointments through the gateway's HTTP/JSON API. No agent-side installation is needed.
+AI agents discover and book appointments through Mudroom's HTTP/JSON API. No agent-side installation is needed.
 
 **Booking flow:** `list_services` → `find_slots` → `quote` → `book`
 
@@ -9,7 +9,7 @@ AI agents discover and book appointments through the gateway's HTTP/JSON API. No
 ## Connect an agent
 
 1. **Expose over HTTPS** (cloud agents cannot reach `localhost`). Run `cloudflared tunnel --url http://localhost:3000`, then set `ALLOWED_HOSTS`. See [the deployment guide](deploy.md#3-expose-it-over-https-with-cloudflared).
-2. **Give the agent your gateway URL.** It reads `/llms.txt` for instructions or `/openapi.json` for the schema.
+2. **Give the agent your Mudroom server's URL.** It reads `/llms.txt` for instructions or `/openapi.json` for the schema.
 3. **Call the public API.** Guardrails include rate limits, per-contact open-booking caps, the booking log, and `BOOKING_ENABLED`. Optional bearer keys (`API_KEYS`) raise limits.
 
 ### How discovery works

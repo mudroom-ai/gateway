@@ -2,9 +2,9 @@
 
 ## Overview
 
-A **Communication** connector, a `CommunicationConnector` with `notify` only (`src/connectors/twilio.ts`): how the merchant hears about agent bookings. It sits beside the Store or Calendar connector and works with **every booking system** (Google Calendar, Square, GlossGenius). When it is configured, the gateway sends the merchant one SMS through [Twilio](https://www.twilio.com) for each agent booking, cancel and reschedule.
+A **Communication** connector, a `CommunicationConnector` with `notify` only (`src/connectors/twilio.ts`): how the merchant hears about agent bookings. It sits beside the Store or Calendar connector and works with **every booking system** (Google Calendar, Square, GlossGenius). When it is configured, Mudroom sends the merchant one SMS through [Twilio](https://www.twilio.com) for each agent booking, cancel and reschedule.
 
-It is **outbound only**: the gateway posts to Twilio's REST API and never reads replies. A text never decides whether a booking happens; the booking is already made (or cancelled, or moved) when the text goes out.
+It is **outbound only**: Mudroom posts to Twilio's REST API and never reads replies. A text never decides whether a booking happens; the booking is already made (or cancelled, or moved) when the text goes out.
 
 Why use it with each system:
 
@@ -62,8 +62,8 @@ It cannot:
 - **Cost.** Each text is a billable Twilio SMS on the merchant's or self-hoster's account.
 - **Carrier filtering.** US carriers filter application-to-person SMS from unregistered numbers. A US long-code number needs **A2P 10DLC** registration in the Twilio Console (**Messaging → Regulatory Compliance**), or texts may be delayed or dropped. Other countries have their own sender rules.
 - **One recipient.** `OWNER_PHONE` is a single number.
-- **Slack and WhatsApp win.** When the `SLACK_*` or `WHATSAPP_*` vars are also set, the gateway uses that channel ([slack.md](slack.md), [whatsapp.md](whatsapp.md)) for owner messages, ignores the three `TWILIO_*` vars and logs a warning at startup. `OWNER_PHONE` alone, without the `TWILIO_*` vars, is not a partial Twilio set: WhatsApp reads it too.
-- **Delivery failures are only logged.** If Twilio rejects or times out (10 seconds), the gateway writes a warning to its log and does not retry.
+- **Slack and WhatsApp win.** When the `SLACK_*` or `WHATSAPP_*` vars are also set, Mudroom uses that channel ([slack.md](slack.md), [whatsapp.md](whatsapp.md)) for owner messages, ignores the three `TWILIO_*` vars and logs a warning at startup. `OWNER_PHONE` alone, without the `TWILIO_*` vars, is not a partial Twilio set: WhatsApp reads it too.
+- **Delivery failures are only logged.** If Twilio rejects or times out (10 seconds), Mudroom writes a warning to its log and does not retry.
 - **Never blocks a booking.** A failed text never fails, delays past the timeout, or undoes a book, cancel or reschedule.
 - Messages are cut at 1500 characters.
 
@@ -71,7 +71,7 @@ It cannot:
 
 This connector throws no `ConnectorError`; agents never see an error from it.
 
-- **Partial config fails startup.** Setting some but not all of the four vars stops the gateway (and `npm run init`) with: `Owner SMS is partly configured: set TWILIO_AUTH_TOKEN, TWILIO_FROM too, or unset all of TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, OWNER_PHONE to log owner notices instead`, naming whichever are missing. Fix: set the missing ones or remove all four.
+- **Partial config fails startup.** Setting some but not all of the four vars stops Mudroom (and `npm run init`) with: `Owner SMS is partly configured: set TWILIO_AUTH_TOKEN, TWILIO_FROM too, or unset all of TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, OWNER_PHONE to log owner notices instead`, naming whichever are missing. Fix: set the missing ones or remove all four.
 - **Delivery failures** are logged, with the phone masked to its last four digits: `[gateway] owner SMS to ***0199 failed (401): Authenticate` (HTTP status plus Twilio's own message), or `... failed: timed out after 10000 ms` / `... failed: network error: ...`. Common causes: a wrong Auth Token (401), an unverified destination on a trial account (21608), or a sending number without SMS capability.
 
 ## Env vars

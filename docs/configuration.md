@@ -9,7 +9,7 @@ Start from [`config.example.json`](../config.example.json). Fields:
 | Field | Meaning |
 |---|---|
 | `merchant_id`, `name` | Identifier and display name (the name shows up in `llms.txt` and the booking page) |
-| `timezone`, `currency` | IANA time zone and ISO currency for every time and price the gateway returns |
+| `timezone`, `currency` | IANA time zone and ISO currency for every time and price Mudroom returns |
 | `services[]` | `id`, `name`, optional `description`, `duration_min`, optional `buffer_min` (default 0, added after the appointment), `price_cents` |
 | `ask_services[]` | Services the business offers but agents cannot book (no fixed price or duration): `id` (lowercase letters, digits and hyphens, up to 64), `name` (up to 80 characters), optional `price_note` (up to 60, the price in your own words, for example `from $80`). Plain single-line text: no backticks, angle brackets or markdown links (`](`). At most 50, default none; an `id` may not repeat one in `services[]`. Agents see them in `/llms.txt` and `GET /api/services` and can message you about one ([agents.md](agents.md#ask-the-owner-services)) |
 | `hours` | Weekly opening windows per day (`mon` … `sun`), each a list of `{start, end}` in local time; an empty list means closed |
@@ -21,7 +21,7 @@ Start from [`config.example.json`](../config.example.json). Fields:
 | `quote_ttl_min` | How long a `quote_id` stays bookable |
 | `limits` | `max_window_days` (default 14), `max_flexibility_min` (default 240), `connector_timeout_ms`, `per_ip_per_min`, `per_key_per_min`, `per_contact_per_hour`, `max_open_bookings_per_contact`, `max_messages_per_hour` (default 30, merchant-wide cap on new `leave_message` threads and follow-ups), `max_open_threads_per_contact` (default 3), `thread_close_after_reply_hours` (default 24, a thread the owner answered closes this long after the owner's last reply when the agent sends nothing more), `thread_close_unanswered_days` (default 7, a thread still waiting for the owner closes this long after the last agent message), `thread_wait_max_seconds` (default 25, 0 to 240, longest hold for `GET /api/threads/:id?wait=N`; 0 turns long-polling off), `max_waiting_requests` (default 200, held `get_thread` requests across all threads; over it a request answers at once) |
 | `booking_enabled` | Default for the `book` kill switch (overridden by `BOOKING_ENABLED`) |
-| `demo` | Default `false`. `true` turns the gateway into a public agent playground (overridden by `DEMO_MODE`); see [deploy.md §7](deploy.md#7-demo-mode-public-agent-playground). Leave it off for a real business |
+| `demo` | Default `false`. `true` turns Mudroom into a public agent playground (overridden by `DEMO_MODE`); see [deploy.md §7](deploy.md#7-demo-mode-public-agent-playground). Leave it off for a real business |
 
 In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (the platform's services, prices and open times are used); keep `name`, `timezone`, `currency` and `limits`. See [connectors/square.md](connectors/square.md) and [connectors/glossgenius.md](connectors/glossgenius.md).
 
@@ -34,7 +34,7 @@ In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (
 | `PORT` | `3000` | |
 | `HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address |
 | `ALLOWED_HOSTS` | unset | Comma list of public/tunnel hostnames accepted in `Host`. **Required behind a tunnel** when `HOST` is loopback |
-| `PUBLIC_URL` | unset | Public base URL (for example `https://gateway.example.com`) written into `/`, `llms.txt`, `openapi.json` and `robots.txt` when the gateway runs behind a tunnel or proxy whose `Host` header is not the public one |
+| `PUBLIC_URL` | unset | Public base URL (for example `https://gateway.example.com`) written into `/`, `llms.txt`, `openapi.json` and `robots.txt` when Mudroom runs behind a tunnel or proxy whose `Host` header is not the public one |
 | `CONFIG_PATH` | `config.json` | Falls back to `config.example.json` if missing, only when `NODE_ENV` is not `production`; in production (the Docker image) the server exits with a hint |
 | `DB_PATH` | `gateway.sqlite` | SQLite file (quotes, bookings, idempotency keys, log, message threads, owner outbox). Must be on persistent storage: agents keep booking and thread ids across sessions |
 | `BOOKING_ENABLED` | config value | Kill switch for `book` |
@@ -49,7 +49,7 @@ In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (
 | `SQUARE_ACCESS_TOKEN` | unset | Square access token (buyer-level scopes). When set, Square is the booking system and the `GOOGLE_*` vars are ignored |
 | `SQUARE_LOCATION_ID` | unset | The Square location to book at |
 | `SQUARE_ENV` | `production` | `sandbox` for a Square sandbox test account |
-| `SQUARE_REFRESH_TOKEN`, `SQUARE_APP_ID`, `SQUARE_APP_SECRET` | unset | Written by `npm run init`. With all three set the gateway renews the 30-day access token itself; without them it expires and `npm run init` must be run again |
+| `SQUARE_REFRESH_TOKEN`, `SQUARE_APP_ID`, `SQUARE_APP_SECRET` | unset | Written by `npm run init`. With all three set Mudroom renews the 30-day access token itself; without them it expires and `npm run init` must be run again |
 | `GLOSSGENIUS_BOOKING_URL` | unset | GlossGenius shadow mode: the merchant's public booking page (`https://yourname.glossgenius.com`). Needs the `GOOGLE_*` vars too, where agent bookings are written. See [connectors/glossgenius.md](connectors/glossgenius.md) |
 | `GLOSSGENIUS_MIN_LEAD_HOURS` | `48` | GlossGenius mode: no slot starts sooner than this many hours from now. Whole number, at least 1 |
 | `TWILIO_ACCOUNT_SID` | unset | Owner SMS, any booking system: Twilio Account SID. See [connectors/twilio.md](connectors/twilio.md) |
@@ -73,4 +73,4 @@ The WhatsApp owner channel (the four `WHATSAPP_*` vars plus `OWNER_PHONE`) works
 
 The owner SMS (the four `TWILIO_*`/`OWNER_PHONE` vars) works with every booking system: with it set, the merchant gets one text per agent booking, cancel and reschedule ([connectors/twilio.md](connectors/twilio.md)).
 
-The booking system is selected by env vars, in this order: `SQUARE_ACCESS_TOKEN` set means Square; else `GLOSSGENIUS_BOOKING_URL` set means GlossGenius shadow mode (with the `GOOGLE_*` vars); else the `GOOGLE_*` vars alone mean Google Calendar. With none, the gateway exits at startup and says which to set.
+The booking system is selected by env vars, in this order: `SQUARE_ACCESS_TOKEN` set means Square; else `GLOSSGENIUS_BOOKING_URL` set means GlossGenius shadow mode (with the `GOOGLE_*` vars); else the `GOOGLE_*` vars alone mean Google Calendar. With none, Mudroom exits at startup and says which to set.

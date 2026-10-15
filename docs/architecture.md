@@ -1,13 +1,13 @@
 # Architecture notes
 
-The gateway runs **one process per merchant**, exposes an HTTP API, and stores local state in SQLite. Connectors handle booking systems and owner communication.
+Mudroom runs **one process per merchant**, exposes an HTTP API, and stores local state in SQLite. Connectors handle booking systems and owner communication.
 
 ## Shape
 
 ```mermaid
 flowchart LR
     Agent[AI agent] --> HTTP[Express API and discovery]
-    HTTP --> Core[Gateway core]
+    HTTP --> Core[Mudroom core]
     Core --> DB[(SQLite)]
     Core --> Booking[Store or Calendar connector]
     Core --> Owner[Communication connector]
@@ -27,8 +27,8 @@ Three modules share interfaces defined in `src/connectors/types.ts`:
 
 | Module | Interface | Responsibility |
 | --- | --- | --- |
-| Calendar | `CalendarConnector` | Supplies busy intervals and events. The gateway builds slots and prices using hours, buffers, blackout days, discounts, and a price floor. `calendar.ts` adapts it to a `BookingConnector`. |
-| Store | `BookingConnector` | Supplies slots and prices and handles booking, cancellation, and rescheduling. Bypasses the gateway's rules engine. |
+| Calendar | `CalendarConnector` | Supplies busy intervals and events. Mudroom builds slots and prices using hours, buffers, blackout days, discounts, and a price floor. `calendar.ts` adapts it to a `BookingConnector`. |
+| Store | `BookingConnector` | Supplies slots and prices and handles booking, cancellation, and rescheduling. Bypasses Mudroom's rules engine. |
 | Communication | `CommunicationConnector` | Works beside either booking module. All providers implement `notify`; two-way providers also implement optional thread members. |
 
 Connectors throw `ConnectorError`; the core shapes [HTTP errors](errors.md#connector-errors). See the [connector registry and development checklist](connectors/README.md).
@@ -73,6 +73,6 @@ The channel recovers missed replies. The core supplies open thread references an
 
 ## No MCP
 
-The gateway uses plain HTTP because its target agents (Meta's Muse and Grok) cannot install an MCP server. Agents discover the API through `/llms.txt`.
+Mudroom uses plain HTTP because its target agents (Meta's Muse and Grok) cannot install an MCP server. Agents discover the API through `/llms.txt`.
 
 `src/middleware/hosts.ts` provides DNS-rebinding protection through `Host` validation and `ALLOWED_HOSTS`. It replaces the MCP SDK's `createMcpExpressApp` validation and fails closed for specific non-loopback bind addresses.

@@ -1,10 +1,10 @@
 # Connectors
 
-A connector is the gateway's adapter to one outside system. There are three modules, each with its contract in `src/connectors/types.ts`:
+A connector is Mudroom's adapter to one outside system. There are three modules, each with its contract in `src/connectors/types.ts`:
 
 - **Store** (`BookingConnector`): a booking platform that returns ready-made slots, sets prices, and books, cancels and reschedules itself (Square, GlossGenius).
-- **Calendar** (`CalendarConnector`): a plain calendar that only knows busy intervals and events. The gateway's own slot engine and rules build slots and prices on top (`calendar.ts` adapts it to a BookingConnector) (Google).
-- **Communication** (`CommunicationConnector`): how the merchant hears from the gateway. It is not a booking system: it sits beside whichever one is configured. Every channel gets one short notice per agent booking, cancel and reschedule; those failures are logged, never thrown, so a channel can never change a booking's outcome. A thread-capable channel (Slack, WhatsApp) also carries agent messages and the owner's typed replies; its thread methods throw `channel_*` codes so the core can queue or refuse. A channel with no threads (WhatsApp) sets `flat` and the owner quotes the message instead; one that needs the provider to call it (WhatsApp's webhook) exposes `webhook` and the server mounts it outside `/api`.
+- **Calendar** (`CalendarConnector`): a plain calendar that only knows busy intervals and events. Mudroom's own slot engine and rules build slots and prices on top (`calendar.ts` adapts it to a BookingConnector) (Google).
+- **Communication** (`CommunicationConnector`): how the merchant hears from Mudroom. It is not a booking system: it sits beside whichever one is configured. Every channel gets one short notice per agent booking, cancel and reschedule; those failures are logged, never thrown, so a channel can never change a booking's outcome. A thread-capable channel (Slack, WhatsApp) also carries agent messages and the owner's typed replies; its thread methods throw `channel_*` codes so the core can queue or refuse. A channel with no threads (WhatsApp) sets `flat` and the owner quotes the message instead; one that needs the provider to call it (WhatsApp's webhook) exposes `webhook` and the server mounts it outside `/api`.
 
 The checklist below applies to all three modules; for a Communication connector, the booking items (idempotency, `slot_unavailable`, cancel/reschedule) are covered by the core booking tests rather than the connector's own, and its tests instead cover every `channel_*` code and, for a thread-capable channel, the inbound path (ack only after the reply is stored, ignored message kinds, reconnect).
 
@@ -50,7 +50,7 @@ Every pull request that adds a connector or changes one must tick all of these. 
 
 - [ ] `npm run init` can configure the connector interactively and non-interactively; `npm run init -- --help` names it.
 - [ ] The wizard writes the env vars to `.env` and runs `checkAccess` before finishing.
-- [ ] The gateway's startup message says which env vars select this connector when none is configured.
+- [ ] Mudroom's startup message says which env vars select this connector when none is configured.
 - [ ] A merchant with no developer can follow the *Setup* section alone. Steps name the exact menu labels of the platform.
 
 ## Adding a connector
