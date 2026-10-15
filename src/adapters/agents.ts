@@ -6,6 +6,7 @@ import type { NextFunction, Request, Response } from "express";
 import type { Config } from "../config.js";
 import type { BookingConnector } from "../connectors/types.js";
 import type { ThreadMode } from "../messages.js";
+import { playgroundPage } from "../demo/page.js";
 import { askServices } from "../services.js";
 import type { AskService, Service } from "../types.js";
 
@@ -22,16 +23,29 @@ export interface Discovery {
   requiresPhone: boolean;
   /** leave_message mode; undefined when messages are off (no owner channel, or MESSAGES_ENABLED=false). */
   messages?: ThreadMode | undefined;
+  /** Demo mode: llms.txt opens with the playground note. */
+  demo?: boolean;
 }
 
-export async function discover(connector: BookingConnector, messages?: ThreadMode): Promise<Discovery> {
+export async function discover(connector: BookingConnector, messages?: ThreadMode, demo = false): Promise<Discovery> {
   let services: Service[] = [];
   try {
     services = await connector.listServices();
   } catch {
     // The page still renders; the agent will see the error on /api/services.
   }
-  return { services, requiresPhone: connector.requiresPhone, ...(messages ? { messages } : {}) };
+  return { services, requiresPhone: connector.requiresPhone, ...(messages ? { messages } : {}), ...(demo ? { demo } : {}) };
+}
+
+/** Demo mode only: what is different about this business, and the one header that lets the playground count agents by vendor. */
+function playgroundNote(d: Discovery): string {
+  if (!d.demo) return "";
+  const away = d.messages === "two_way" ? " If the owner does not answer a message within 10 minutes, a templated reply says they are away." : "";
+  return `## This is a playground
+
+This business is a public demo. Bookings are real calendar events, but they cancel themselves 60 minutes after they are made.${away} Please send the header \`X-Agent-Name\` with your product's name (\`X-Agent-Name: Muse\` or \`X-Agent-Name: GrokBot\`) on every request: the playground counts agents by vendor, and its public feed never shows names, contact details or messages.
+
+`;
 }
 
 /**
@@ -61,7 +75,7 @@ You can check availability and book an appointment with ${config.name} directly 
 
 Times are RFC 3339 **with an offset**. The business is in \`${config.timezone}\`. Prices are integer cents in ${config.currency}.
 
-## Services
+${playgroundNote(d)}## Services
 
 ${services}
 
@@ -172,9 +186,9 @@ If your turn ends before the owner answers, tell the user to ask you to check ba
 `;
 }
 
-export function agentInstructionsHandler(config: Config, connector: BookingConnector, publicUrl?: string, messages?: ThreadMode) {
+export function agentInstructionsHandler(config: Config, connector: BookingConnector, publicUrl?: string, messages?: ThreadMode, demo = false) {
   return async (req: Request, res: Response) => {
-    res.type("text/markdown; charset=utf-8").send(agentInstructions(config, baseUrl(req, publicUrl), await discover(connector, messages)));
+    res.type("text/markdown; charset=utf-8").send(agentInstructions(config, baseUrl(req, publicUrl), await discover(connector, messages, demo)));
   };
 }
 
@@ -213,13 +227,15 @@ export function homePage(config: Config, base: string, d: Discovery): string {
 `;
 }
 
-/** `/`: HTML for browsers, the markdown instructions for everything else (curl, fetch tools). */
-export function homeHandler(config: Config, connector: BookingConnector, publicUrl?: string, messages?: ThreadMode) {
+/** `/`: HTML for browsers (the playground page in demo mode), the markdown instructions for everything else (curl, fetch tools). */
+export function homeHandler(config: Config, connector: BookingConnector, publicUrl?: string, messages?: ThreadMode, demo = false) {
   return async (req: Request, res: Response) => {
     const base = baseUrl(req, publicUrl);
-    const d = await discover(connector, messages);
+    const html = (req.get("accept") ?? "").includes("text/html");
     res.vary("Accept");
-    if ((req.get("accept") ?? "").includes("text/html")) res.type("html").send(homePage(config, base, d));
+    if (html && demo) return void res.type("html").send(playgroundPage(config, base, { askOwner: messages === "two_way" }));
+    const d = await discover(connector, messages, demo);
+    if (html) res.type("html").send(homePage(config, base, d));
     else res.type("text/markdown; charset=utf-8").send(agentInstructions(config, base, d));
   };
 }

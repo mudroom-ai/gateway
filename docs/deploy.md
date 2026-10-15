@@ -18,6 +18,7 @@ Sections:
 4. [Hosting on a platform](#4-hosting-on-a-platform)
 5. [Operations](#5-operations)
 6. [Unsafe calendar sources](#6-unsafe-calendar-sources-delayed-feed-schedulers)
+7. [Demo mode (public agent playground)](#7-demo-mode-public-agent-playground)
 
 ## 1. Google Calendar setup
 
@@ -50,7 +51,7 @@ The merchant (the calendar owner) does this once:
 
 Outside Docker, `npm run init` asks for the key path and Calendar ID, writes them to `.env` (mode 600; `npm start` loads it), checks access, and can optionally create and immediately delete a test event to prove write access.
 
-If the key or calendar ID is unset, the gateway **exits at startup** with a message saying which variables to set. There is no demo mode: every booking lands in a real calendar.
+If the key or calendar ID is unset, the gateway **exits at startup** with a message saying which variables to set. Every booking lands in a real calendar, demo mode included ([§7](#7-demo-mode-public-agent-playground)).
 
 At startup the gateway checks calendar access and **exits with a fix message** if the calendar isn't shared or the key is bad, for example: `Share calendar "..." with gateway@... ("Make changes to events") and check GOOGLE_CALENDAR_ID.`
 
@@ -245,3 +246,18 @@ The gateway is only as correct as the busy times in the Google Calendar it reads
 Treat any scheduler that syncs to Google by subscription feed rather than by direct two-way API the same way. A safe setup is one where Google Calendar **is** the source of truth: appointments are created there, or by a tool that writes to it immediately.
 
 For a GlossGenius merchant, use the [GlossGenius connector](connectors/glossgenius.md) instead ([§1e](#1e-glossgenius-shadow-mode)): it reads availability straight from the booking page, writes agent bookings to a separate shared calendar, keeps a 48-hour minimum lead time and texts the merchant to add each booking to GlossGenius.
+
+## 7. Demo mode (public agent playground)
+
+Demo mode runs a gateway as a public playground: anyone can tell their own agent to book with a pretend business and watch what happened. The project's live one is [demo.mudroom.dev](https://demo.mudroom.dev). Never turn it on for a real business.
+
+Turn it on with `"demo": true` in `config.json` or `DEMO_MODE=1` (the env var wins). With it off, nothing below happens. With it on:
+
+- **`/` in a browser is the playground page**: the business name, one prompt to copy into an agent, counters (agents today and this week, bookings made, by vendor) and a feed of the last 10 agent requests. The page polls `GET /demo/feed` every 5 seconds. Agents fetching `/` without `Accept: text/html` still get the markdown instructions, and `/llms.txt` gains a short "This is a playground" section.
+- **`GET /demo/feed`** is public JSON, rate-limited per IP like the discovery pages (`per_ip_per_min`). Each item is a vendor (`muse` or `grokbot`: the playground supports only Muse and GrokBot, and any caller not recognised as GrokBot counts as Muse), a request kind (`services`, `slots`, `quote`, `book`, `cancel`, `reschedule`, `message`), an outcome (`ok` or an error code) and a timestamp. It never carries names, phone numbers, emails, message text, ids or IPs.
+- **Vendor counting** reads the user-agent, then an `X-Agent-Name` header that the playground's `llms.txt` asks agents to send. Agents that call from a code sandbox (Muse, GrokBot) send a plain `curl` user-agent, so GrokBot needs that header to be counted as GrokBot; everything else counts as Muse. Each `/api` request is stored in the `agent_requests` table (time, vendor, kind, outcome, and a visitor hash of IP plus user-agent under a salt kept only in memory and changed every UTC day, so agents can be counted per day but not traced). Rows older than 30 days are deleted.
+- **Calendar events are titled `[demo] <service> - <name>`**, and every booking cancels itself **60 minutes after it was made**: the event is deleted and the booking marked cancelled. The schedule is the bookings table, so a restart loses nothing: the gateway checks at boot and then every minute.
+- **Owner away**: when an owner thread gets no reply for **10 minutes**, the gateway stores and posts a templated owner reply ("Thanks, the human owner is away from the desk right now, this is a playground; your booking still goes through") so the agent is never left waiting. A real reply from Slack still comes through afterwards.
+- **Extra caps**, on top of the normal limits: 10 bookings per IP per day, 30 bookings per vendor per hour, and 30 messages (new threads and follow-ups) per IP per day. Over a cap, the request gets `rate_limited` with `retry_after_s`. Cloud agents may share egress IPs, so the per-IP caps are deliberately loose.
+
+Run a playground as its own service with its own calendar and its own Slack app. Slack Socket Mode spreads events across every connection that uses the same app token, so two gateways on one Slack app would each miss some owner replies.

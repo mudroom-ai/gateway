@@ -122,6 +122,8 @@ export const ConfigSchema = z.object({
   limits: LimitsSchema.default(LimitsSchema.parse({})),
   /** Kill switch default; env BOOKING_ENABLED overrides. */
   booking_enabled: z.boolean().default(true),
+  /** Public playground (src/demo/): live feed at /, "[demo]" events that cancel themselves, templated owner-away replies. Env DEMO_MODE overrides. */
+  demo: z.boolean().default(false),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -143,6 +145,8 @@ export const EnvSchema = z.object({
   CONFIG_PATH: z.string().default("config.json"),
   DB_PATH: z.string().default("gateway.sqlite"),
   BOOKING_ENABLED: boolEnv.optional(),
+  /** Playground mode (see Config.demo); overrides the config's `demo`. */
+  DEMO_MODE: boolEnv.optional(),
   /** Kill switch for leave_message / get_thread / follow_up. Default true whenever an owner channel is configured. */
   MESSAGES_ENABLED: boolEnv.optional(),
   /** Comma-separated optional bearer keys. */
@@ -212,6 +216,7 @@ export interface RuntimeSettings {
   db_path: string;
   booking_enabled: boolean;
   messages_enabled: boolean;
+  demo: boolean;
   api_keys: string[];
   trust_proxy: TrustProxy;
   trust_proxy_debug: boolean;
@@ -318,6 +323,7 @@ export function loadEnv(env: NodeJS.ProcessEnv, config?: Config): RuntimeSetting
     db_path: e.DB_PATH,
     booking_enabled: e.BOOKING_ENABLED ?? config?.booking_enabled ?? true,
     messages_enabled: e.MESSAGES_ENABLED ?? true,
+    demo: e.DEMO_MODE ?? config?.demo ?? false,
     api_keys: csv(e.API_KEYS),
     trust_proxy: parseTrustProxy(e.TRUST_PROXY),
     trust_proxy_debug: e.TRUST_PROXY_DEBUG ?? false,

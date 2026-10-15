@@ -21,6 +21,7 @@ Start from [`config.example.json`](../config.example.json). Fields:
 | `quote_ttl_min` | How long a `quote_id` stays bookable |
 | `limits` | `max_window_days` (default 14), `max_flexibility_min` (default 240), `connector_timeout_ms`, `per_ip_per_min`, `per_key_per_min`, `per_contact_per_hour`, `max_open_bookings_per_contact`, `max_messages_per_hour` (default 30, merchant-wide cap on new `leave_message` threads and follow-ups), `max_open_threads_per_contact` (default 3), `thread_close_after_reply_hours` (default 24, a thread the owner answered closes this long after the owner's last reply when the agent sends nothing more), `thread_close_unanswered_days` (default 7, a thread still waiting for the owner closes this long after the last agent message), `thread_wait_max_seconds` (default 25, 0 to 240, longest hold for `GET /api/threads/:id?wait=N`; 0 turns long-polling off), `max_waiting_requests` (default 200, held `get_thread` requests across all threads; over it a request answers at once) |
 | `booking_enabled` | Default for the `book` kill switch (overridden by `BOOKING_ENABLED`) |
+| `demo` | Default `false`. `true` turns the gateway into a public agent playground (overridden by `DEMO_MODE`); see [deploy.md §7](deploy.md#7-demo-mode-public-agent-playground). Leave it off for a real business |
 
 In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (the platform's services, prices and open times are used); keep `name`, `timezone`, `currency` and `limits`. See [connectors/square.md](connectors/square.md) and [connectors/glossgenius.md](connectors/glossgenius.md).
 
@@ -37,6 +38,7 @@ In Square and GlossGenius mode `services`, `hours` and `discounts` are ignored (
 | `CONFIG_PATH` | `config.json` | Falls back to `config.example.json` if missing, only when `NODE_ENV` is not `production`; in production (the Docker image) the server exits with a hint |
 | `DB_PATH` | `gateway.sqlite` | SQLite file (quotes, bookings, idempotency keys, log, message threads, owner outbox). Must be on persistent storage: agents keep booking and thread ids across sessions |
 | `BOOKING_ENABLED` | config value | Kill switch for `book` |
+| `DEMO_MODE` | config `demo` (`false`) | `1`/`true` runs the public agent playground: the playground page at `/`, `GET /demo/feed`, `[demo]` event titles, bookings that cancel themselves after 60 minutes, a templated owner reply after 10 minutes without one, and extra booking and message caps. See [deploy.md §7](deploy.md#7-demo-mode-public-agent-playground) |
 | `API_KEYS` | unset | Optional comma list of bearer keys (higher limits; when set, any other `Authorization` value gets 401; when unset the header is ignored) |
 | `TRUST_CF_CONNECTING_IP` | `false` | Also honor `CF-Connecting-IP` from trusted peers. Only when the trusted proxy is cloudflared/Cloudflare |
 | `TRUST_PROXY` | `loopback` | Which peers may set the client IP (`X-Forwarded-For`/`CF-Connecting-IP`) for per-IP limits: hop count, IP/CIDR list, or `false`. **Set it behind Docker or a PaaS**, see [deploy.md](deploy.md#client-ips-and-trust_proxy) |

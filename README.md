@@ -18,6 +18,8 @@ The API (services, slots, quotes, booking, cancel, reschedule, owner messages) i
 
 ![Meta's Muse asks a dog groomer a question through Gateway, the owner answers from Slack, Muse books the bath, and the event appears in the groomer's Google Calendar](docs/media/muse-booking.gif)
 
+Try it with your own agent at the live playground, **[demo.mudroom.dev](https://demo.mudroom.dev)**: a pretend dog groomer whose bookings cancel themselves after an hour ([demo mode](docs/deploy.md#7-demo-mode-public-agent-playground)).
+
 To repeat this recording with your own agent, give the local server a public HTTPS address (cloud agents can't reach `localhost`) and hand the agent the link. Needs [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (`brew install cloudflared`).
 
 ```bash
