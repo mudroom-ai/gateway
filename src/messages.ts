@@ -443,7 +443,7 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     }
     if (!supportsThreads(channel)) throw new ConnectorError("channel_rejected", "owner channel cannot carry threads");
     const dedupe_key = dedupeKey(t.thread_id, outboxId);
-    if (kind === "open") return (await channel.openThread({ thread_id: t.thread_id, text, dedupe_key })).provider_ref;
+    if (kind === "open") return (await channel.openThread({ thread_id: t.thread_id, text, dedupe_key, customer_name: t.customer.name })).provider_ref;
     await channel.postToThread(t.provider_ref!, text, { dedupe_key });
     return undefined;
   }

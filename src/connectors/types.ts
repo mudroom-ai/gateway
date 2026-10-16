@@ -179,6 +179,8 @@ export interface ThreadOpener {
   text: string;
   /** Unique per outbox row; the channel attaches it to the post so `findPosted` can find it. */
   dedupe_key?: string;
+  /** The customer's name, for a channel that words its own lines around the opener (WhatsApp pool: "This chat is now about ..."). */
+  customer_name?: string;
 }
 
 export interface PostedQuery {

@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { createSlackChannel, type SlackChannel } from "../connectors/slack.js";
 import { createTwilioChannel } from "../connectors/twilio.js";
-import { createWhatsappChannel, waNumber, WHATSAPP_WEBHOOK_PATH, type WhatsappChannel } from "../connectors/whatsapp.js";
+import { createWhatsappChannel, parseTemplate, waNumber, WHATSAPP_POOL_TEMPLATE_ERROR, WHATSAPP_WEBHOOK_PATH, type WhatsappChannel } from "../connectors/whatsapp.js";
 import { parsePhoneNumberIds } from "../connectors/whatsapp-pool.js";
 import { showGuide, type GuideIO, type SetupGuide } from "./guide.js";
 import type { Prompter } from "./init.js";
@@ -86,6 +86,8 @@ export function whatsappAnswer(o: { phone?: string | undefined; token?: string |
     whatsapp_template: trim(o.template),
   };
   if (!createWhatsappChannel(settings)) return undefined; // throws on a partial set
+  // Checked here, not by the one-number channel above: a pool needs the template for its numbers' first messages.
+  if (ids!.length > 1 && !parseTemplate(settings.whatsapp_template)) throw new Error(WHATSAPP_POOL_TEMPLATE_ERROR);
   return { phone: settings.owner_phone!, accessToken: settings.whatsapp_access_token!, phoneNumberId: ids!.join(","), appSecret: settings.whatsapp_app_secret!, verifyToken: settings.whatsapp_verify_token!, template: settings.whatsapp_template };
 }
 

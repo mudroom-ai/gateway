@@ -1099,14 +1099,19 @@ describe("which customer? (askWhichThread)", () => {
     const { ops, advance } = setup({ channel });
     const a = await leaveOk(ops);
     advance(1000);
-    await leaveOk(ops, { customer: { name: "ann lee", phone: "+1 202 555 0123" } });
+    await leaveOk(ops, { customer: { name: "ann lee", email: "ann@example.com" } });
     advance(1000);
     await leaveOk(ops, { customer: BO });
     const long = `Line one\n\n  line two ${"🐶".repeat(80)}`;
     expect(codeOf(await ops.agentFollowUp({ thread_id: a.thread_id, read_token: a.read_token, message: long }))).toBe("ok");
     await ops.onOwnerMessage(top("d1"));
     const choices = channel.asks[0]!.choices;
-    expect(choices.map((c) => c.title)).toEqual(["Ann Lee (0199)", "ann lee (0123)", "Bo"]);
+    // Only one Ann has a phone, so both get the thread id's tail.
+    const [t1, t2, t3] = choices.map((c) => c.title);
+    expect(t1).toMatch(/^Ann Lee \(\w{4}\)$/);
+    expect(t2).toMatch(/^ann lee \(\w{4}\)$/);
+    expect(t1!.slice(-6).toLowerCase()).not.toBe(t2!.slice(-6).toLowerCase());
+    expect(t3).toBe("Bo");
     const detail = choices[0]!.detail!;
     expect(detail.startsWith("Line one line two 🐶")).toBe(true);
     expect(detail).not.toMatch(/\n/);

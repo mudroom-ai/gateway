@@ -863,7 +863,7 @@ describe("init helpers", () => {
 });
 
 describe("init wizard: WhatsApp number pool", () => {
-  const POOL_FLAGS = ["--owner-phone", "+12025550199", "--whatsapp-token", "EAAx", "--whatsapp-app-secret", "sec"];
+  const POOL_FLAGS = ["--owner-phone", "+12025550199", "--whatsapp-token", "EAAx", "--whatsapp-app-secret", "sec", "--whatsapp-template", "owner_update"];
   const base = {
     env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1" },
     makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),

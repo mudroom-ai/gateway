@@ -67,7 +67,7 @@ function world() {
 
   async function boot(): Promise<{ channel: WhatsappChannel; ops: MessageOps }> {
     const channel = createWhatsappChannel(
-      { whatsapp_access_token: "tok", whatsapp_phone_number_id: `${P1},${P2}`, whatsapp_app_secret: SECRET, whatsapp_verify_token: "verify-me", owner_phone: OWNER },
+      { whatsapp_access_token: "tok", whatsapp_phone_number_id: `${P1},${P2}`, whatsapp_app_secret: SECRET, whatsapp_verify_token: "verify-me", owner_phone: OWNER, whatsapp_template: "owner_update" },
       { fetch: fetchImpl, store, now: () => nowMs, warn: (m) => warns.push(m) },
     )!;
     const ops = createMessageOps({ config, store, channel, settings: { messages_enabled: true }, now: () => new Date(nowMs), timers, log: () => {} })!;

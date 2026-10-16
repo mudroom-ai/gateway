@@ -223,8 +223,13 @@ CREATE TABLE IF NOT EXISTS wa_pending (
 /** Pending prompts are kept this long past expiry, so a tap Meta redelivers late still reads as consumed or expired. */
 const PENDING_KEEP_MS = 7 * 24 * 3_600_000;
 
-/** Two-way threads with no wa_threads row: opened before the pool existed. They count on the primary number. */
-const PRE_POOL = "t.mode = 'two_way' AND NOT EXISTS (SELECT 1 FROM wa_threads w WHERE w.thread_id = t.thread_id)";
+/**
+ * Two-way threads with no wa_threads row whose opener reached the owner: opened before the pool existed. They count on
+ * the primary number. A thread another leave_message is opening right now has no row and no provider_ref yet; it is not one.
+ */
+const PRE_POOL = "t.mode = 'two_way' AND t.provider_ref IS NOT NULL AND NOT EXISTS (SELECT 1 FROM wa_threads w WHERE w.thread_id = t.thread_id)";
+/** The thread's opener was given up on (the sweep marked it failed): it never reached the chat, so it holds no number. */
+const LIVE = "NOT EXISTS (SELECT 1 FROM owner_outbox o WHERE o.thread_id = t.thread_id AND o.kind = 'open' AND o.state = 'failed')";
 const BUSY_OUTBOX = "EXISTS (SELECT 1 FROM owner_outbox o WHERE o.thread_id = t.thread_id AND o.state IN ('queued', 'sending'))";
 
 interface NumberUse {
@@ -821,8 +826,8 @@ export class Store implements WhatsappPoolStore {
       if (had) return { number_id: had.number_id as string, reused: Number(had.reused) === 1 };
 
       const onNumber = this.db.prepare(
-        `SELECT COUNT(*) AS used, COALESCE(SUM(t.state != 'closed'), 0) AS open, MAX(t.closed_at_ms) AS released,
-           COALESCE(MAX(${BUSY_OUTBOX}), 0) AS busy
+        `SELECT COALESCE(SUM(w.accepted_at_ms IS NOT NULL), 0) AS used, COALESCE(SUM(t.state != 'closed' AND ${LIVE}), 0) AS open,
+           MAX(t.closed_at_ms) AS released, COALESCE(MAX(${BUSY_OUTBOX}), 0) AS busy
          FROM wa_threads w JOIN threads t ON t.thread_id = w.thread_id
          WHERE w.number_id = ? AND w.owner_phone = ?`,
       );
@@ -853,8 +858,9 @@ export class Store implements WhatsappPoolStore {
       const free = stats
         .filter((s) => s.free)
         .sort((a, b) => Number(a.used) - Number(b.used) || (a.used ? a.released - b.released : 0) || b.window - a.window || a.i - b.i);
-      // No free number: overflow onto the busiest chat (ties to pool order, so the primary first).
-      const pick = free[0] ?? [...stats].sort((a, b) => b.open - a.open || a.i - b.i)[0];
+      // No free number: overflow onto the busiest chat. When none is open (all held after a close, or still sending), the
+      // one released longest ago, so a late notice of its last conversation is least likely to land after this opener.
+      const pick = free[0] ?? [...stats].sort((a, b) => b.open - a.open || a.released - b.released || a.i - b.i)[0];
       if (!pick) throw new Error("waAssign: empty pool");
       // Pre-pool threads on the primary are history its chat shows too; remember it before they are purged.
       if (Number(prePool.used) > 0) this.recordUse(q.pool[0]!, q.owner_phone, q.now_ms);
@@ -880,7 +886,7 @@ export class Store implements WhatsappPoolStore {
         .prepare(
           `SELECT t.thread_id, t.provider_ref, w.reused, w.accepted_at_ms, w.opener_read_at_ms, w.confirmed_at_ms
            FROM wa_threads w JOIN threads t ON t.thread_id = w.thread_id
-           WHERE w.number_id = ? AND w.owner_phone = ? AND t.state != 'closed'
+           WHERE w.number_id = ? AND w.owner_phone = ? AND t.state != 'closed' AND ${LIVE}
            ORDER BY w.assigned_at_ms, t.thread_id`,
         )
         .all(q.number_id, q.owner_phone) as Raw[]

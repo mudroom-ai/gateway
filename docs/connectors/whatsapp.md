@@ -45,7 +45,7 @@ With one number, every customer's conversation lands in the same chat. Add more 
 1. **Use the same WhatsApp Business Account.** Every number must be on the account that holds the first one. They then share the access token, the App Secret, the webhook and the template, so there is nothing else to set. One webhook and the `messages` field cover every number.
 2. **Add each number.** In **WhatsApp → API Setup**, click **Add phone number** (or use **WhatsApp Manager → Phone numbers**). Each number needs its own SIM or landline that is not on a personal WhatsApp, the verification code Meta sends to it by SMS or voice call, and Meta's review of its display name.
 3. **Copy each Phone number ID** from **WhatsApp → API Setup** (pick the number under **From**).
-4. **List them, comma-separated, primary first.** Give the list to `npm run init` at the Phone number ID question, or with `--whatsapp-phone-id 123456789012345,234567890123456,345678901234567`, or set `WHATSAPP_PHONE_NUMBER_ID` to it. The first is the primary: booking notices come from it. The startup check reads every number.
+4. **List them, comma-separated, primary first.** Give the list to `npm run init` at the Phone number ID question, or with `--whatsapp-phone-id 123456789012345,234567890123456,345678901234567`, or set `WHATSAPP_PHONE_NUMBER_ID` to it. The first is the primary: booking notices come from it. The startup check reads every number. A pool also needs `WHATSAPP_TEMPLATE` (see *24-hour window* under Limitations): a new number's first message is always outside the window, so without a template Mudroom refuses to start.
 5. **Save each number as a contact** on the owner's phone with a number in the name: "Sam's Barbers 1", "Sam's Barbers 2", and so on. Every chat shows the business name, so the numbers are how the owner tells them apart.
 6. **Open each 24-hour window.** Send "hi" to each number from the owner's phone, as in step 7.
 
@@ -104,7 +104,7 @@ The thread methods (`openThread`, `postToThread`) throw `ConnectorError`; `notif
 
 Webhook deliveries never raise errors toward agents. A wrong `hub.verify_token` on the handshake answers 403 and logs `WhatsApp webhook handshake refused: hub.verify_token does not match WHATSAPP_VERIFY_TOKEN`; a delivery with a bad or missing `X-Hub-Signature-256` answers 401 and logs `bad X-Hub-Signature-256 (is WHATSAPP_APP_SECRET the app's App Secret?)` and is not read; a reply the core could not store answers 500 so Meta sends it again.
 
-- **Partial config fails startup.** Setting some but not all of the five vars stops Mudroom (and `npm run init`) with `WhatsApp is partly configured: set WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN too, or unset all of ...`, naming whichever are missing. A phone number in `WHATSAPP_PHONE_NUMBER_ID`, alone or in the list, is refused with a hint to copy the Phone number ID instead (`WHATSAPP_PHONE_NUMBER_ID must be numeric Phone number IDs from Meta app > WhatsApp > API Setup, not phone numbers ("+1 202 555 0199")`).
+- **Partial config fails startup.** Setting some but not all of the five vars stops Mudroom (and `npm run init`) with `WhatsApp is partly configured: set WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN too, or unset all of ...`, naming whichever are missing. A phone number in `WHATSAPP_PHONE_NUMBER_ID`, alone or in the list, is refused with a hint to copy the Phone number ID instead (`WHATSAPP_PHONE_NUMBER_ID must be numeric Phone number IDs from Meta app > WhatsApp > API Setup, not phone numbers ("+1 202 555 0199")`). A list of several numbers without `WHATSAPP_TEMPLATE` is refused too (`... a number pool, which needs WHATSAPP_TEMPLATE ...`).
 - **Startup check** (`checkAccess`) reads every sending number with the token; one failing number fails the check. Common failures: an expired temporary token (190), a Phone number ID from another app (100 / 33), a token without the WhatsApp permissions (10).
 
 ## Env vars
@@ -115,7 +115,7 @@ Webhook deliveries never raise errors toward agents. A wrong `hub.verify_token` 
 | `WHATSAPP_PHONE_NUMBER_ID` | unset | Phone number ID of the sending number (digits, from **API Setup**), not the number itself. One or more, comma-separated, for one chat per customer (`123456789012345,234567890123456`); spaces and repeats are dropped. The first is the primary: booking notices come from it. |
 | `WHATSAPP_APP_SECRET` | unset | The Meta app's App Secret (**App settings → Basic**); signs every webhook delivery. Secret. |
 | `WHATSAPP_VERIFY_TOKEN` | unset | Token Meta echoes when verifying the webhook URL. `npm run init` generates it; paste it into **WhatsApp → Configuration → Webhook**. |
-| `WHATSAPP_TEMPLATE` | unset | Optional: approved utility template with one `{{1}}` body parameter, as `name` or `name:lang` (default `en_US`), for messages outside the 24-hour window. |
+| `WHATSAPP_TEMPLATE` | unset | Approved utility template with one `{{1}}` body parameter, as `name` or `name:lang` (default `en_US`), for messages outside the 24-hour window. Optional with one number, required with several. |
 | `OWNER_PHONE` | unset | The owner's WhatsApp number with country code, e.g. `+12025550199`. Shared with [Twilio](twilio.md). |
 
 Set the first four plus `OWNER_PHONE`, or none of the `WHATSAPP_*` vars. The webhook path is fixed: `/webhooks/whatsapp`.

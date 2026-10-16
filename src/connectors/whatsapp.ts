@@ -132,23 +132,16 @@ export function distinctTitles(raw: string[], max: number): string[] {
   return new Set(out).size === out.length ? out : raw.map(withIndex);
 }
 
-/** The customer's name from the core's opener ("From: <name> (<contact>)"), or undefined. */
-function openerCustomer(text: string): string | undefined {
-  const line = /^From: (.+)$/m.exec(text)?.[1]?.trim();
-  if (!line) return undefined;
-  const name = /^(.+) \([^()]*\)$/.exec(line)?.[1] ?? line;
-  return clipLine(name, 60) || undefined;
-}
-
 /**
  * The opener as sent from a pool number. A chat that holds only this conversation says so instead of asking for a swipe;
  * a reused one first says the messages above are someone else's. An overflow chat (other threads open) keeps the flat text.
  */
-export function poolOpenerText(text: string, o: { reused: boolean; shared: boolean }): string {
+export function poolOpenerText(text: string, o: { reused: boolean; shared: boolean; customer?: string | undefined }): string {
   if (o.shared) return text;
   const body = text.replace(FLAT_REPLY_HINT, () => POOL_REPLY_HINT);
   if (!o.reused) return body;
-  return `This chat is now about ${openerCustomer(text) ?? "a new customer"}. Messages above are about another customer.\n\n${body}`;
+  const who = clipLine(o.customer ?? "", 60) || "a new customer";
+  return `This chat is now about ${who}. Messages above are about another customer.\n\n${body}`;
 }
 
 export interface WhatsappOwnerOptions {
@@ -478,7 +471,8 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
     if (s?.status !== "read" || typeof s.id !== "string") return;
     if (typeof s.recipient_id === "string" && waNumber(s.recipient_id) !== owner) return;
     const at = metaMs(s.timestamp);
-    if (at !== undefined) store!.waMarkRead(s.id, at);
+    // WhatsApp may report only the newest message read; a follow-up read means its thread's opener above it was read too.
+    if (at !== undefined) store!.waMarkRead(refs.get(s.id) ?? s.id, at);
   }
 
   /** The pool number a delivery is for, or null to skip it (another number on the same Meta app). */
@@ -570,7 +564,7 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
       const from = ids.includes(a.number_id) ? a.number_id : primary!;
       // Overflow: other conversations are open in this chat, so it stays a flat chat (swipe to reply).
       const shared = store!.waOpenOn({ number_id: from, owner_phone: owner, is_primary: from === primary }).some((t) => t.thread_id !== opener.thread_id);
-      const id = await trackSend(() => sendText(poolOpenerText(opener.text, { reused: a.reused, shared }), from));
+      const id = await trackSend(() => sendText(poolOpenerText(opener.text, { reused: a.reused, shared, customer: opener.customer_name }), from));
       store!.waMarkAccepted(opener.thread_id, id, now());
       remember(id, id);
       return { provider_ref: id };
@@ -619,7 +613,7 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
     // Only with a store: the question is kept there until the owner taps, so a restart in between loses nothing.
     channel.askWhichThread = async (m: OwnerInboundMessage, choices: ThreadChoice[]) => {
       const at = inflight.get(m.provider_msg_id)?.number_id ?? (pooled ? undefined : primary!);
-      if (at === undefined) throw new Error("WhatsApp askWhichThread: no webhook delivery in progress for this message");
+      if (at === undefined) throw new ConnectorError("channel_rejected", "WhatsApp askWhichThread: no webhook delivery in progress for this message");
       if (choices.length === 0 || store.waHasPending(m.provider_msg_id)) return; // a redelivery: asked already
       const idMax = choices.length <= BUTTONS_MAX ? BUTTON_ID_MAX : ROW_ID_MAX;
       const fits = choices.length <= LIST_ROWS_MAX && choices.every((c) => c.provider_ref.length <= idMax);
@@ -680,6 +674,9 @@ export const WHATSAPP_REQUIRED_ENV = ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_N
  * list several numbers (the pool); that needs `opts.store`, and without one this
  * throws, so the gateway never runs a pool it cannot route.
  */
+export const WHATSAPP_POOL_TEMPLATE_ERROR =
+  "WHATSAPP_PHONE_NUMBER_ID lists several numbers (a number pool), which needs WHATSAPP_TEMPLATE: the first message on a number the owner has not written to in 24 hours can only be an approved template";
+
 export function createWhatsappChannel(
   settings: WhatsappSettings,
   opts: Omit<WhatsappOwnerOptions, "accessToken" | "phoneNumberId" | "phoneNumberIds" | "appSecret" | "verifyToken" | "ownerPhone" | "template"> = {},
@@ -699,6 +696,9 @@ export function createWhatsappChannel(
   }
   if (!/^\d{5,}$/.test(waNumber(settings.owner_phone!))) throw new Error("OWNER_PHONE must be the owner's WhatsApp number with country code, e.g. +1 202 555 0199");
   const ids = parsePhoneNumberIds(settings.whatsapp_phone_number_id);
+  const template = parseTemplate(settings.whatsapp_template);
+  // A number the owner has not written to in 24 hours (every new one) only takes the approved template.
+  if (ids.length > 1 && !template) throw new Error(WHATSAPP_POOL_TEMPLATE_ERROR);
   if (ids.length > 1 && !opts.store) {
     throw new Error(`WHATSAPP_PHONE_NUMBER_ID lists ${ids.length} numbers (a number pool), which needs the gateway's database to route replies: start the gateway with npm start, or list one number`);
   }
@@ -709,6 +709,6 @@ export function createWhatsappChannel(
     appSecret: settings.whatsapp_app_secret!.trim(),
     verifyToken: settings.whatsapp_verify_token!.trim(),
     ownerPhone: settings.owner_phone!,
-    template: parseTemplate(settings.whatsapp_template),
+    template,
   });
 }

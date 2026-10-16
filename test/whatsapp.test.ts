@@ -432,7 +432,7 @@ function pool(script?: Script) {
   const store = new FakePoolStore();
   let t = T0;
   let n = 0;
-  const m = meta(script ?? (() => ok(`wamid.o${++n}`)), { pnid: `${P1},${P2}`, store, now: () => t });
+  const m = meta(script ?? (() => ok(`wamid.o${++n}`)), { pnid: `${P1},${P2}`, store, now: () => t, template: "owner_update" });
   /** Each POST with the number it was sent from. */
   const posts = () => m.reqs.filter((r) => r.method === "POST").map((r) => ({ from: r.url.split("/").at(-2)!, body: r.body! }));
   return { ...m, store, posts, tick: (ms: number) => void (t += ms), now: () => t };
@@ -440,6 +440,7 @@ function pool(script?: Script) {
 
 const openerFor = (tid: string, name: string) => ({
   thread_id: tid,
+  customer_name: name,
   text: `New message for Paws from a customer's AI assistant (thread ${tid})\nFrom: ${name} (+1 202 555 0199)\n\nDo you groom cats?\n\n${FLAT_REPLY_HINT}`,
 });
 const bodyOf = (b: Record<string, unknown>) => (b.text as { body: string }).body;
@@ -511,7 +512,7 @@ describe("whatsappOwnerChannel: number pool, sending", () => {
   it("checkAccess reads every number and names the one that fails; an open thread on a removed number is warned about once", async () => {
     const store = new FakePoolStore();
     store.rows.set("old", { thread_id: "old", number_id: "333333333333333", owner: OWNER_WA, reused: false, accepted_at_ms: T0, opener: "wamid.old", read_at_ms: null, confirmed_at_ms: null, closed_at_ms: null });
-    const good = meta((req) => new Response(JSON.stringify({ id: req.url.split("/").at(-1)!.split("?")[0] })), { pnid: `${P1},${P2}`, store });
+    const good = meta((req) => new Response(JSON.stringify({ id: req.url.split("/").at(-1)!.split("?")[0] })), { pnid: `${P1},${P2}`, store, template: "owner_update" });
     await good.ch.checkAccess();
     await good.ch.start();
     expect(good.reqs.map((r) => r.url.split("/").at(-1)!.split("?")[0])).toEqual([P1, P2]);
@@ -519,15 +520,16 @@ describe("whatsappOwnerChannel: number pool, sending", () => {
     expect(good.logs[0]).toContain("***3333");
     await good.ch.postToThread("wamid.old", "late").catch(() => {}); // this fake answers no message id
     expect(good.reqs.at(-1)!.url).toContain(`/${P1}/messages`);
-    const bad = meta((req) => (req.url.includes(P2) ? graphError(100) : new Response(JSON.stringify({ id: P1 }))), { pnid: `${P1},${P2}`, store: new FakePoolStore() });
+    const bad = meta((req) => (req.url.includes(P2) ? graphError(100) : new Response(JSON.stringify({ id: P1 }))), { pnid: `${P1},${P2}`, store: new FakePoolStore(), template: "owner_update" });
     const e = await bad.ch.checkAccess().catch((x: unknown) => x);
     expect((e as ConnectorError).code).toBe("channel_rejected");
     expect((e as ConnectorError).message).toContain(`Phone number ID ${P2}`);
   });
 
-  it("refuses a bad id list, and a pool without a store", () => {
-    const base = { whatsapp_access_token: "t", whatsapp_app_secret: "s", whatsapp_verify_token: "v", owner_phone: OWNER };
+  it("refuses a bad id list, a pool without a template, and a pool without a store", () => {
+    const base = { whatsapp_access_token: "t", whatsapp_app_secret: "s", whatsapp_verify_token: "v", owner_phone: OWNER, whatsapp_template: "owner_update" };
     expect(() => createWhatsappChannel({ ...base, whatsapp_phone_number_id: "1,abc" })).toThrow(/numeric Phone number IDs/);
+    expect(() => createWhatsappChannel({ ...base, whatsapp_template: undefined, whatsapp_phone_number_id: "1,2" }, { store: new FakePoolStore() })).toThrow(/needs WHATSAPP_TEMPLATE/);
     expect(() => createWhatsappChannel({ ...base, whatsapp_phone_number_id: "1,2" })).toThrow(/number pool/);
     expect(createWhatsappChannel({ ...base, whatsapp_phone_number_id: "1,2" }, { store: new FakePoolStore() })).toBeDefined();
     expect(createWhatsappChannel({ ...base, whatsapp_phone_number_id: " 1, ,1 " })).toBeDefined(); // one number after parsing
@@ -564,6 +566,20 @@ describe("whatsappOwnerChannel: number pool, routing", () => {
     await ch.webhook.handle(delivery([text("wamid.in2", "Yes", { timestamp: ts(later + 2_000) })], { pnid: P1 }));
     expect(handled[1]).toMatchObject({ provider_ref, provider_msg_id: "wamid.in2" });
     expect(handled[1]!.scope_refs).toBeUndefined();
+  });
+
+  it("a read receipt for a follow-up counts for the opener above it", async () => {
+    const { ch, handled, store, tick, now } = pool(); // sends answer wamid.o1, wamid.o2, ... in order
+    await ch.openThread(openerFor("t1", "Ann"));
+    await ch.openThread(openerFor("t2", "Bea"));
+    store.close("t1", now());
+    tick(RELEASE_HOLD_MS);
+    const { provider_ref } = await ch.openThread(openerFor("t3", "Cy"));
+    await ch.postToThread(provider_ref, "Follow-up from the assistant:\n\nAlso, Saturday?"); // wamid.o4
+    const later = now() + 60_000;
+    await ch.webhook.handle(delivery([], { pnid: P1, statuses: [{ id: "wamid.o4", status: "read", timestamp: ts(later), recipient_id: OWNER_WA }] }));
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes", { timestamp: ts(later + 1_000) })], { pnid: P1 }));
+    expect(handled[0]).toMatchObject({ provider_ref, provider_msg_id: "wamid.in1" });
   });
 
   it("a quote in a reused chat routes exactly and confirms the thread, so later plain replies route", async () => {
@@ -745,7 +761,7 @@ describe("whatsappOwnerChannel: number pool, Which customer?", () => {
 
 describe("server wiring: the owner channel gets the store", () => {
   it("createOwnerChannel refuses a WhatsApp pool without a store and builds it with one", () => {
-    const settings = { whatsapp_access_token: "t", whatsapp_phone_number_id: `${P1},${P2}`, whatsapp_app_secret: "s", whatsapp_verify_token: "v", owner_phone: OWNER } as unknown as RuntimeSettings;
+    const settings = { whatsapp_access_token: "t", whatsapp_phone_number_id: `${P1},${P2}`, whatsapp_app_secret: "s", whatsapp_verify_token: "v", owner_phone: OWNER, whatsapp_template: "owner_update" } as unknown as RuntimeSettings;
     const connector = {} as BookingConnector;
     expect(() => createOwnerChannel(settings, connector)).toThrow(/number pool/);
     const ch = createOwnerChannel(settings, connector, { store: openStore(":memory:") });

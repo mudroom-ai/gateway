@@ -25,10 +25,14 @@ const thread = (id: string, over: Partial<ThreadRow> = {}): ThreadRow => ({
 });
 
 /** As leave_message does it: the thread and its opener (in flight) exist before the channel assigns a number. */
-function open(s: Store, id: string, nowMs: number, pool = [A, B]) {
+function open(s: Store, id: string, nowMs: number, pool = [A, B], accepted = true) {
   s.insertThread(thread(id, { updated_at_ms: nowMs }));
   const ob = s.insertOutbox({ thread_id: id, kind: "open", text: "hi", state: "sending", attempts: 1, next_at_ms: null }, "now");
   const got = s.waAssign({ thread_id: id, owner_phone: OWNER, pool, now_ms: nowMs });
+  if (!accepted) return got; // the send is still in flight (or was refused)
+  // Meta accepted the opener: the channel records it, the core stores the ref and marks the row delivered.
+  s.waMarkAccepted(id, `wamid.${id}`, nowMs);
+  s.setProviderRef(id, `wamid.${id}`, nowMs);
   s.updateOutbox(ob, { state: "delivered" }, "now");
   return got;
 }
@@ -86,9 +90,9 @@ describe("store: WhatsApp number pool", () => {
 
   it("frees a number when its thread is deleted or expired", () => {
     const s = new Store(":memory:");
-    open(s, "t1", 0);
+    open(s, "t1", 0, [A, B], false);
     open(s, "t2", 0);
-    s.deleteThread("t1");
+    s.deleteThread("t1"); // the opener was refused: nothing reached the chat
     expect(open(s, "t3", 0)).toEqual({ number_id: A, reused: false });
     expect(s.expireIdleThreads(0, 10, 5000)).toEqual(["t2", "t3"]);
     expect(open(s, "t4", 5000 + RELEASE_HOLD_MS)).toEqual({ number_id: A, reused: true });
@@ -97,14 +101,24 @@ describe("store: WhatsApp number pool", () => {
   it("remembers a number that carried a conversation after its threads are purged; a refused opener leaves no history", () => {
     const s = new Store(":memory:");
     expect(open(s, "t1", 0)).toEqual({ number_id: A, reused: false });
-    s.waMarkAccepted("t1", "wamid.1", 10);
     close(s, "t1", 1000);
     s.purgeClosedThreads(2000); // the thread and its wa_threads row are gone, the chat's messages are not
-    expect(open(s, "t2", 5000 + RELEASE_HOLD_MS)).toEqual({ number_id: B, reused: false });
+    expect(open(s, "t2", 5000 + RELEASE_HOLD_MS, [A, B], false)).toEqual({ number_id: B, reused: false });
     s.deleteThread("t2"); // never accepted: the send was refused
     expect(open(s, "t3", 6000 + RELEASE_HOLD_MS)).toEqual({ number_id: B, reused: false });
-    s.waMarkAccepted("t3", "wamid.3", 6000 + RELEASE_HOLD_MS);
     expect(open(s, "t4", 7000 + RELEASE_HOLD_MS)).toEqual({ number_id: A, reused: true });
+  });
+
+  it("a thread another leave_message is still opening is not pre-pool history, and a given-up opener holds no number", () => {
+    const s = new Store(":memory:");
+    s.insertThread(thread("t1")); // inserted, its opener in flight, not yet assigned (no row, no provider_ref)
+    const ob = s.insertOutbox({ thread_id: "t1", kind: "open", text: "hi", state: "sending", attempts: 1, next_at_ms: null }, "now");
+    expect(open(s, "t2", 0)).toEqual({ number_id: A, reused: false });
+    expect(s.waAssign({ thread_id: "t1", owner_phone: OWNER, pool: [A, B], now_ms: 0 })).toEqual({ number_id: B, reused: false });
+    s.updateOutbox(ob, { state: "failed", last_error: "gave up" }, "now"); // the sweep gave up on t1's opener
+    expect(s.waOpenOn({ number_id: B, owner_phone: OWNER, is_primary: false })).toEqual([]);
+    close(s, "t2", 0);
+    expect(open(s, "t3", RELEASE_HOLD_MS)).toEqual({ number_id: B, reused: false }); // B never carried a message
   });
 
   it("records acceptance, the first read and the first confirmation", () => {
