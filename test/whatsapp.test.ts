@@ -1,10 +1,28 @@
 // WhatsApp owner channel against a scripted fake of Meta's Cloud API (never the live one):
 // the send shapes, the 24-hour window fallback, every channel_* code, and the webhook
-// (handshake, signature, quote and plain replies, strangers, non-text, redelivery).
+// (handshake, signature, quote and plain replies, strangers, non-text, redelivery), and the
+// number pool over an in-memory store (assignment, the routing gate, "Which customer?", taps).
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { ConnectorError, type InboundWebhookRequest, type OwnerInboundMessage, type OwnerMessageHandler } from "../src/connectors/types.js";
-import { createWhatsappChannel, parseTemplate, templateParam, waNumber, whatsappOwnerChannel, WHATSAPP_WEBHOOK_PATH, WINDOW_CLOSED_CODE } from "../src/connectors/whatsapp.js";
+import { ConnectorError, FLAT_REPLY_HINT, type BookingConnector, type InboundWebhookRequest, type OwnerInboundMessage, type OwnerMessageHandler, type ThreadChoice } from "../src/connectors/types.js";
+import {
+  clipLine,
+  createWhatsappChannel,
+  distinctTitles,
+  parseTemplate,
+  PICKER_FALLBACK_HINT,
+  POOL_REPLY_HINT,
+  TAP_AGAIN_NOTICE,
+  templateParam,
+  waNumber,
+  whatsappOwnerChannel,
+  WHATSAPP_WEBHOOK_PATH,
+  WINDOW_CLOSED_CODE,
+} from "../src/connectors/whatsapp.js";
+import type { RuntimeSettings } from "../src/config.js";
+import { createOwnerChannel } from "../src/server.js";
+import { openStore } from "../src/store/sqlite.js";
+import { PENDING_TTL_MS, RELEASE_HOLD_MS, type WaAssignment, type WaOpenThread, type WaPending, type WaTakeResult, type WhatsappPoolStore } from "../src/connectors/whatsapp-pool.js";
 
 const OWNER = "+1 202 555 0199";
 const OWNER_WA = "12025550199";
@@ -20,7 +38,7 @@ const graphError = (code: number, status = 400, extra: Record<string, unknown> =
   new Response(JSON.stringify({ error: { message: `(#${code}) oops`, type: "OAuthException", code, ...extra } }), { status });
 
 /** Scripted Meta: records each request, answers from the script (default: every send succeeds). */
-function meta(script: Script = () => ok(), opts: { template?: string } = {}) {
+function meta(script: Script = () => ok(), opts: { template?: string; pnid?: string; store?: WhatsappPoolStore; now?: () => number } = {}) {
   const reqs: Req[] = [];
   const logs: string[] = [];
   const fetchImpl: typeof fetch = async (url, init) => {
@@ -33,8 +51,8 @@ function meta(script: Script = () => ok(), opts: { template?: string } = {}) {
     return r;
   };
   const ch = createWhatsappChannel(
-    { whatsapp_access_token: "tok", whatsapp_phone_number_id: PNID, whatsapp_app_secret: SECRET, whatsapp_verify_token: VERIFY, owner_phone: OWNER, whatsapp_template: opts.template },
-    { fetch: fetchImpl, warn: (m) => logs.push(m), timeoutMs: 50 },
+    { whatsapp_access_token: "tok", whatsapp_phone_number_id: opts.pnid ?? PNID, whatsapp_app_secret: SECRET, whatsapp_verify_token: VERIFY, owner_phone: OWNER, whatsapp_template: opts.template },
+    { fetch: fetchImpl, warn: (m) => logs.push(m), timeoutMs: 50, ...(opts.store ? { store: opts.store } : {}), ...(opts.now ? { now: opts.now } : {}) },
   )!;
   const handled: OwnerInboundMessage[] = [];
   let answer: Awaited<ReturnType<OwnerMessageHandler>> | Error = "accepted";
@@ -51,8 +69,10 @@ function meta(script: Script = () => ok(), opts: { template?: string } = {}) {
 const sign = (raw: string) => `sha256=${createHmac("sha256", SECRET).update(raw).digest("hex")}`;
 
 /** A webhook POST as Meta sends it, signed with the app secret unless `signature` says otherwise. */
-function delivery(messages: Record<string, unknown>[], o: { signature?: string; pnid?: string; field?: string; raw?: string } = {}): InboundWebhookRequest {
-  const raw = o.raw ?? JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "WABA", changes: [{ field: o.field ?? "messages", value: { messaging_product: "whatsapp", metadata: { display_phone_number: "15550000000", phone_number_id: o.pnid ?? PNID }, messages } }] }] });
+function delivery(messages: Record<string, unknown>[], o: { signature?: string; pnid?: string; field?: string; raw?: string; statuses?: Record<string, unknown>[] } = {}): InboundWebhookRequest {
+  // A status-only delivery (read receipts) carries `statuses` and no `messages`, as Meta sends it.
+  const items = o.statuses ? { ...(messages.length ? { messages } : {}), statuses: o.statuses } : { messages };
+  const raw = o.raw ?? JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "WABA", changes: [{ field: o.field ?? "messages", value: { messaging_product: "whatsapp", metadata: { display_phone_number: "15550000000", phone_number_id: o.pnid ?? PNID }, ...items } }] }] });
   return { method: "POST", query: {}, headers: { "content-type": "application/json", "x-hub-signature-256": o.signature ?? sign(raw) }, rawBody: Buffer.from(raw) };
 }
 
@@ -313,5 +333,417 @@ describe("whatsappOwnerChannel unit helpers", () => {
     const ch = whatsappOwnerChannel({ accessToken: "t", phoneNumberId: PNID, appSecret: SECRET, verifyToken: VERIFY, ownerPhone: OWNER_WA, fetch: async (u, i) => (reqs.push({ url: String(u), method: i?.method ?? "GET", headers: {}, body: JSON.parse(String(i?.body)) }), ok()) });
     await ch.notify("hi");
     expect(reqs[0]!.body!.to).toBe(OWNER_WA);
+  });
+});
+
+// ---- Number pool (several WHATSAPP_PHONE_NUMBER_IDs) ----
+
+const P1 = "111111111111111";
+const P2 = "222222222222222";
+const T0 = 1_760_000_000_000;
+/** Meta's whole-second timestamp for an owner clock time. */
+const ts = (ms: number) => String(Math.floor(ms / 1000));
+
+type FakeRow = { thread_id: string; number_id: string; owner: string; reused: boolean; accepted_at_ms: number | null; opener: string | null; read_at_ms: number | null; confirmed_at_ms: number | null; closed_at_ms: number | null };
+
+/** In-memory WhatsappPoolStore following the contract in whatsapp-pool.ts (the outbox part of "free" is not modelled). */
+class FakePoolStore implements WhatsappPoolStore {
+  rows = new Map<string, FakeRow>();
+  windows = new Map<string, number>();
+  pending = new Map<string, WaPending & { consumed: boolean }>();
+  failOn: string | undefined;
+
+  private check(name: string): void {
+    if (this.failOn === name) throw new Error(`SQLITE_BUSY in ${name}`);
+  }
+  close(thread_id: string, at_ms: number): void {
+    this.rows.get(thread_id)!.closed_at_ms = at_ms;
+  }
+  private on(number_id: string, owner: string): FakeRow[] {
+    return [...this.rows.values()].filter((r) => r.number_id === number_id && r.owner === owner);
+  }
+  waAssign(q: { thread_id: string; owner_phone: string; pool: string[]; now_ms: number }): WaAssignment {
+    this.check("waAssign");
+    const had = this.rows.get(q.thread_id);
+    if (had) return { number_id: had.number_id, reused: had.reused };
+    const free = q.pool.filter((n) => this.on(n, q.owner_phone).every((r) => r.closed_at_ms !== null && r.closed_at_ms + RELEASE_HOLD_MS <= q.now_ms));
+    const lastClose = (n: string) => Math.max(...this.on(n, q.owner_phone).map((r) => r.closed_at_ms!));
+    const openCount = (n: string) => this.on(n, q.owner_phone).filter((r) => r.closed_at_ms === null).length;
+    const pick =
+      free.find((n) => this.on(n, q.owner_phone).length === 0) ??
+      [...free].sort((a, b) => lastClose(a) - lastClose(b))[0] ??
+      q.pool.reduce((best, n) => (openCount(n) > openCount(best) ? n : best), q.pool[0]!);
+    const reused = this.on(pick, q.owner_phone).length > 0;
+    this.rows.set(q.thread_id, { thread_id: q.thread_id, number_id: pick, owner: q.owner_phone, reused, accepted_at_ms: null, opener: null, read_at_ms: null, confirmed_at_ms: null, closed_at_ms: null });
+    return { number_id: pick, reused };
+  }
+  waNumberForRef(provider_ref: string): string | null {
+    return [...this.rows.values()].find((r) => r.opener === provider_ref)?.number_id ?? null;
+  }
+  waOpenOn(q: { number_id: string; owner_phone: string; is_primary: boolean }): WaOpenThread[] {
+    this.check("waOpenOn");
+    return this.on(q.number_id, q.owner_phone)
+      .filter((r) => r.closed_at_ms === null)
+      .map((r) => ({ thread_id: r.thread_id, provider_ref: r.opener, reused: r.reused, accepted_at_ms: r.accepted_at_ms, opener_read_at_ms: r.read_at_ms, confirmed_at_ms: r.confirmed_at_ms }));
+  }
+  waMarkAccepted(thread_id: string, opener_wamid: string, at_ms: number): void {
+    const r = this.rows.get(thread_id)!;
+    r.opener = opener_wamid;
+    r.accepted_at_ms = at_ms;
+  }
+  waMarkRead(opener_wamid: string, at_ms: number): void {
+    this.check("waMarkRead");
+    const r = [...this.rows.values()].find((x) => x.opener === opener_wamid);
+    if (r && r.read_at_ms === null) r.read_at_ms = at_ms;
+  }
+  waConfirm(thread_id: string, at_ms: number): void {
+    const r = this.rows.get(thread_id);
+    if (r && r.confirmed_at_ms === null) r.confirmed_at_ms = at_ms;
+  }
+  waTouchWindow(number_id: string, owner_phone: string, at_ms: number): void {
+    this.windows.set(`${number_id}:${owner_phone}`, at_ms);
+  }
+  waPutPending(p: WaPending): void {
+    this.check("waPutPending");
+    if ([...this.pending.values()].some((x) => x.orig_wamid === p.orig_wamid)) return;
+    this.pending.set(p.prompt_wamid, { ...p, consumed: false });
+  }
+  waHasPending(orig_wamid: string): boolean {
+    return [...this.pending.values()].some((x) => x.orig_wamid === orig_wamid);
+  }
+  waTakePending(q: { prompt_wamid: string; chosen_ref: string; number_id: string; now_ms: number }): WaTakeResult {
+    const p = this.pending.get(q.prompt_wamid);
+    if (!p) return { ok: false, reason: "unknown" };
+    if (p.consumed) return { ok: false, reason: "consumed" };
+    if (q.now_ms >= p.expires_at_ms) return { ok: false, reason: "expired" };
+    if (p.number_id !== q.number_id || !p.allowed.includes(q.chosen_ref)) return { ok: false, reason: "not_allowed" };
+    p.consumed = true;
+    const { consumed: _c, ...pending } = p;
+    return { ok: true, pending };
+  }
+  waOrphanNumbers(pool: string[], owner_phone: string): string[] {
+    return [...new Set([...this.rows.values()].filter((r) => r.owner === owner_phone && r.closed_at_ms === null && !pool.includes(r.number_id)).map((r) => r.number_id))];
+  }
+}
+
+/** A two-number pool over the scripted Meta, an in-memory store and a settable server clock. Every send gets a fresh wamid. */
+function pool(script?: Script) {
+  const store = new FakePoolStore();
+  let t = T0;
+  let n = 0;
+  const m = meta(script ?? (() => ok(`wamid.o${++n}`)), { pnid: `${P1},${P2}`, store, now: () => t });
+  /** Each POST with the number it was sent from. */
+  const posts = () => m.reqs.filter((r) => r.method === "POST").map((r) => ({ from: r.url.split("/").at(-2)!, body: r.body! }));
+  return { ...m, store, posts, tick: (ms: number) => void (t += ms), now: () => t };
+}
+
+const openerFor = (tid: string, name: string) => ({
+  thread_id: tid,
+  text: `New message for Paws from a customer's AI assistant (thread ${tid})\nFrom: ${name} (+1 202 555 0199)\n\nDo you groom cats?\n\n${FLAT_REPLY_HINT}`,
+});
+const bodyOf = (b: Record<string, unknown>) => (b.text as { body: string }).body;
+const tap = (id: string, prompt: string, chosen: string, o: { list?: boolean; at?: number } = {}) => ({
+  context: { from: "15550000000", id: prompt },
+  from: OWNER_WA,
+  id,
+  timestamp: ts(o.at ?? T0),
+  type: "interactive",
+  interactive: o.list ? { type: "list_reply", list_reply: { id: chosen, title: "Ann", description: "x" } } : { type: "button_reply", button_reply: { id: chosen, title: "Ann" } },
+});
+/** What the core does with a scoped message: ask over the given choices (titles from the refs). */
+const askingCore = (ch: ReturnType<typeof pool>["ch"], handled: OwnerInboundMessage[], titles: Record<string, string> = {}): OwnerMessageHandler => async (m) => {
+  handled.push(m);
+  if (m.scope_refs) {
+    await ch.askWhichThread!(m, m.scope_refs.map((r) => ({ provider_ref: r, thread_id: r, title: titles[r] ?? r })));
+    return "ignored";
+  }
+  return "accepted";
+};
+
+describe("whatsappOwnerChannel: number pool, sending", () => {
+  it("gives each thread its own number while one is free, then overflows onto the busier one (ties to the primary)", async () => {
+    const { ch, posts, store } = pool();
+    const r1 = await ch.openThread(openerFor("t1", "Ann"));
+    const r2 = await ch.openThread(openerFor("t2", "Bea"));
+    const r3 = await ch.openThread(openerFor("t3", "Cy"));
+    const r4 = await ch.openThread(openerFor("t4", "Di"));
+    expect(posts().map((p) => p.from)).toEqual([P1, P2, P1, P1]);
+    expect([r1, r2, r3, r4].map((r) => r.provider_ref)).toEqual(["wamid.o1", "wamid.o2", "wamid.o3", "wamid.o4"]);
+    expect(store.rows.get("t1")).toMatchObject({ opener: "wamid.o1", accepted_at_ms: T0 });
+    // An overflow opener shares its chat, so it keeps the swipe-to-reply wording.
+    expect(bodyOf(posts()[2]!.body)).toContain(FLAT_REPLY_HINT);
+  });
+
+  it("a fresh number's opener says the chat is only about this customer; a reused one first says the messages above are someone else's", async () => {
+    const { ch, posts, store, tick, now } = pool();
+    await ch.openThread(openerFor("t1", "Ann"));
+    await ch.openThread(openerFor("t2", "Bea"));
+    const fresh = bodyOf(posts()[0]!.body);
+    expect(fresh).toContain(POOL_REPLY_HINT);
+    expect(fresh).not.toContain(FLAT_REPLY_HINT);
+    expect(fresh.startsWith("New message")).toBe(true);
+    store.close("t1", now());
+    tick(RELEASE_HOLD_MS);
+    await ch.openThread(openerFor("t3", "Cy Ng"));
+    expect(posts()[2]!.from).toBe(P1);
+    const reused = bodyOf(posts()[2]!.body);
+    expect(reused.split("\n")[0]).toBe("This chat is now about Cy Ng. Messages above are about another customer.");
+    expect(reused).toContain(POOL_REPLY_HINT);
+  });
+
+  it("follow-ups and reactions go out from the thread's number; notify and unknown refs from the primary", async () => {
+    const { ch, posts } = pool();
+    await ch.openThread(openerFor("t1", "Ann"));
+    const { provider_ref: ref2 } = await ch.openThread(openerFor("t2", "Bea"));
+    await ch.postToThread(ref2, "Follow-up from the assistant");
+    await ch.acknowledge(ref2, "wamid.in9");
+    await ch.notify("Agent booking: Ann");
+    await ch.postToThread("wamid.from-before-the-pool", "Follow-up");
+    expect(posts().slice(2).map((p) => [p.from, p.body.type])).toEqual([
+      [P2, "text"],
+      [P2, "reaction"],
+      [P1, "text"],
+      [P1, "text"],
+    ]);
+  });
+
+  it("checkAccess reads every number and names the one that fails; an open thread on a removed number is warned about once", async () => {
+    const store = new FakePoolStore();
+    store.rows.set("old", { thread_id: "old", number_id: "333333333333333", owner: OWNER_WA, reused: false, accepted_at_ms: T0, opener: "wamid.old", read_at_ms: null, confirmed_at_ms: null, closed_at_ms: null });
+    const good = meta((req) => new Response(JSON.stringify({ id: req.url.split("/").at(-1)!.split("?")[0] })), { pnid: `${P1},${P2}`, store });
+    await good.ch.checkAccess();
+    await good.ch.start();
+    expect(good.reqs.map((r) => r.url.split("/").at(-1)!.split("?")[0])).toEqual([P1, P2]);
+    expect(good.logs.filter((l) => l.includes("no longer in WHATSAPP_PHONE_NUMBER_ID"))).toHaveLength(1);
+    expect(good.logs[0]).toContain("***3333");
+    await good.ch.postToThread("wamid.old", "late").catch(() => {}); // this fake answers no message id
+    expect(good.reqs.at(-1)!.url).toContain(`/${P1}/messages`);
+    const bad = meta((req) => (req.url.includes(P2) ? graphError(100) : new Response(JSON.stringify({ id: P1 }))), { pnid: `${P1},${P2}`, store: new FakePoolStore() });
+    const e = await bad.ch.checkAccess().catch((x: unknown) => x);
+    expect((e as ConnectorError).code).toBe("channel_rejected");
+    expect((e as ConnectorError).message).toContain(`Phone number ID ${P2}`);
+  });
+
+  it("refuses a bad id list, and a pool without a store", () => {
+    const base = { whatsapp_access_token: "t", whatsapp_app_secret: "s", whatsapp_verify_token: "v", owner_phone: OWNER };
+    expect(() => createWhatsappChannel({ ...base, whatsapp_phone_number_id: "1,abc" })).toThrow(/numeric Phone number IDs/);
+    expect(() => createWhatsappChannel({ ...base, whatsapp_phone_number_id: "1,2" })).toThrow(/number pool/);
+    expect(createWhatsappChannel({ ...base, whatsapp_phone_number_id: "1,2" }, { store: new FakePoolStore() })).toBeDefined();
+    expect(createWhatsappChannel({ ...base, whatsapp_phone_number_id: " 1, ,1 " })).toBeDefined(); // one number after parsing
+  });
+});
+
+describe("whatsappOwnerChannel: number pool, routing", () => {
+  it("a plain reply in a fresh chat is scoped until 5 s after the opener was accepted, then routed to it", async () => {
+    const { ch, handled, store } = pool();
+    const { provider_ref } = await ch.openThread(openerFor("t1", "Ann"));
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes", { timestamp: ts(T0 + 4_000) })], { pnid: P1 }));
+    await ch.webhook.handle(delivery([text("wamid.in2", "3pm works", { timestamp: ts(T0 + 6_000) })], { pnid: P1 }));
+    expect(handled).toEqual([
+      { provider_msg_id: "wamid.in1", user_id: OWNER_WA, text: "Yes", sent_at_ms: T0 + 4_000, scope_refs: [provider_ref] },
+      { provider_ref, provider_msg_id: "wamid.in2", user_id: OWNER_WA, text: "3pm works", sent_at_ms: T0 + 6_000 },
+    ]);
+    expect(store.windows.get(`${P1}:${OWNER_WA}`)).toBe(T0 + 6_000);
+  });
+
+  it("a plain reply in a reused chat is scoped until the owner read the opener, then routed", async () => {
+    const { ch, handled, store, tick, now } = pool();
+    await ch.openThread(openerFor("t1", "Ann"));
+    await ch.openThread(openerFor("t2", "Bea"));
+    store.close("t1", now());
+    tick(RELEASE_HOLD_MS);
+    const { provider_ref } = await ch.openThread(openerFor("t3", "Cy"));
+    expect(store.rows.get("t3")).toMatchObject({ number_id: P1, reused: true });
+    const later = now() + 60_000;
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes", { timestamp: ts(later) })], { pnid: P1 }));
+    expect(handled[0]).toMatchObject({ scope_refs: [provider_ref] });
+    expect(handled[0]!.provider_ref).toBeUndefined();
+    const read = await ch.webhook.handle(delivery([], { pnid: P1, statuses: [{ id: provider_ref, status: "read", timestamp: ts(later + 1_000), recipient_id: OWNER_WA }] }));
+    expect(read.status).toBe(200);
+    await ch.webhook.handle(delivery([text("wamid.in2", "Yes", { timestamp: ts(later + 2_000) })], { pnid: P1 }));
+    expect(handled[1]).toMatchObject({ provider_ref, provider_msg_id: "wamid.in2" });
+    expect(handled[1]!.scope_refs).toBeUndefined();
+  });
+
+  it("a quote in a reused chat routes exactly and confirms the thread, so later plain replies route", async () => {
+    const { ch, handled, store, tick, now } = pool();
+    await ch.openThread(openerFor("t1", "Ann"));
+    await ch.openThread(openerFor("t2", "Bea"));
+    store.close("t1", now());
+    tick(RELEASE_HOLD_MS);
+    const { provider_ref } = await ch.openThread(openerFor("t3", "Cy"));
+    const at = now() + 30_000;
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes", { timestamp: ts(at), context: { id: provider_ref } })], { pnid: P1 }));
+    expect(store.rows.get("t3")!.confirmed_at_ms).toBe(Math.floor(at / 1000) * 1000);
+    await ch.webhook.handle(delivery([text("wamid.in2", "and 3pm", { timestamp: ts(at + 1_000) })], { pnid: P1 }));
+    expect(handled.map((m) => m.provider_ref)).toEqual([provider_ref, provider_ref]);
+  });
+
+  it("a shared (overflow) chat is always scoped to its open threads; a chat with nothing open is ignored", async () => {
+    const { ch, handled, sends } = pool();
+    const r1 = (await ch.openThread(openerFor("t1", "Ann"))).provider_ref;
+    await ch.openThread(openerFor("t2", "Bea"));
+    const r3 = (await ch.openThread(openerFor("t3", "Cy"))).provider_ref;
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes", { timestamp: ts(T0 + 3_600_000) })], { pnid: P1 }));
+    expect(handled).toEqual([{ provider_msg_id: "wamid.in1", user_id: OWNER_WA, text: "Yes", sent_at_ms: T0 + 3_600_000, scope_refs: [r1, r3] }]);
+    const empty = pool();
+    await empty.ch.webhook.handle(delivery([text("wamid.in2", "Hello?")], { pnid: P2 }));
+    expect(empty.handled).toEqual([]);
+    expect(empty.sends()).toEqual([]);
+    expect(sends()).toHaveLength(3);
+  });
+
+  it("notices go out from the number the owner wrote to; deliveries for numbers outside the pool are skipped", async () => {
+    const { ch, posts, handled, setAnswer } = pool();
+    await ch.webhook.handle(delivery([{ id: "wamid.img", from: OWNER_WA, timestamp: "1760000000", type: "image", image: { id: "m1" } }], { pnid: P2 }));
+    setAnswer("rejected:thread_closed");
+    await ch.webhook.handle(delivery([text("wamid.in1", "late", { context: { id: "wamid.x" } })], { pnid: P2 }));
+    expect(posts().map((p) => p.from)).toEqual([P2, P2]);
+    await ch.webhook.handle(delivery([text("wamid.in2", "hi")], { pnid: "999" }));
+    expect(handled).toHaveLength(1);
+  });
+});
+
+describe("whatsappOwnerChannel: number pool, Which customer?", () => {
+  /** Two threads sharing P1 (t1 and the overflow t3) and the owner's plain reply there, through a core that asks. */
+  async function asked(script?: Script) {
+    const p = pool(script);
+    const r1 = (await p.ch.openThread(openerFor("t1", "Ann"))).provider_ref;
+    await p.ch.openThread(openerFor("t2", "Bea"));
+    const r3 = (await p.ch.openThread(openerFor("t3", "Cy"))).provider_ref;
+    const core: OwnerInboundMessage[] = [];
+    p.ch.onOwnerMessage(askingCore(p.ch, core, { [r1]: "Ann", [r3]: "Cy" }));
+    const res = await p.ch.webhook.handle(delivery([text("wamid.in1", "Yes, 3pm works", { timestamp: ts(T0 + 60_000) })], { pnid: P1 }));
+    return { ...p, r1, r3, core, res };
+  }
+
+  it("asks with reply buttons from the receiving number and stores the question; a redelivery does not ask twice", async () => {
+    const { ch, posts, store, r1, r3, res, now } = await asked();
+    expect(res.status).toBe(200);
+    const q = posts()[3]!;
+    expect(q.from).toBe(P1);
+    expect(q.body).toMatchObject({
+      to: OWNER_WA,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: 'Which customer is this reply for?\n\n"Yes, 3pm works"' },
+        action: { buttons: [{ type: "reply", reply: { id: r1, title: "Ann" } }, { type: "reply", reply: { id: r3, title: "Cy" } }] },
+      },
+    });
+    expect([...store.pending.values()]).toEqual([
+      { prompt_wamid: "wamid.o4", orig_wamid: "wamid.in1", text: "Yes, 3pm works", sent_at_ms: T0 + 60_000, number_id: P1, allowed: [r1, r3], expires_at_ms: now() + PENDING_TTL_MS, consumed: false },
+    ]);
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes, 3pm works", { timestamp: ts(T0 + 60_000) })], { pnid: P1 }));
+    expect(posts()).toHaveLength(4);
+  });
+
+  it("a tap replays the original text with the chosen thread and confirms it; a redelivered tap is ignored", async () => {
+    const { ch, core, store, r3, posts } = await asked();
+    await ch.webhook.handle(delivery([tap("wamid.tap1", "wamid.o4", r3, { at: T0 + 70_000 })], { pnid: P1 }));
+    expect(core.at(-1)).toEqual({ provider_ref: r3, provider_msg_id: "wamid.in1", user_id: OWNER_WA, text: "Yes, 3pm works", sent_at_ms: T0 + 60_000 });
+    expect(store.rows.get("t3")!.confirmed_at_ms).toBe(T0 + 70_000);
+    await ch.webhook.handle(delivery([tap("wamid.tap1", "wamid.o4", r3)], { pnid: P1 }));
+    expect(core).toHaveLength(2);
+    expect(posts()).toHaveLength(4); // no notice, nothing sent
+  });
+
+  it("a list tap works too, and a tap whose reply was not stored is replayed when Meta redelivers it", async () => {
+    const { ch, core, r1 } = await asked();
+    let fail = true;
+    ch.onOwnerMessage(async (m) => {
+      core.push(m);
+      if (fail) throw new Error("SQLITE_BUSY");
+      return "accepted";
+    });
+    expect((await ch.webhook.handle(delivery([tap("wamid.tap1", "wamid.o4", r1, { list: true })], { pnid: P1 }))).status).toBe(500);
+    fail = false;
+    expect((await ch.webhook.handle(delivery([tap("wamid.tap1", "wamid.o4", r1, { list: true })], { pnid: P1 }))).status).toBe(200);
+    expect(core.slice(-2).map((m) => [m.provider_ref, m.provider_msg_id, m.text])).toEqual([
+      [r1, "wamid.in1", "Yes, 3pm works"],
+      [r1, "wamid.in1", "Yes, 3pm works"],
+    ]);
+  });
+
+  it("an unknown, foreign-chat or expired tap gets one 'send it again' notice from the number tapped in, and is never routed", async () => {
+    const { ch, core, posts, r1, tick } = await asked();
+    await ch.webhook.handle(delivery([tap("wamid.tapX", "wamid.nope", r1)], { pnid: P1 }));
+    await ch.webhook.handle(delivery([tap("wamid.tapX", "wamid.nope", r1)], { pnid: P1 })); // redelivered
+    await ch.webhook.handle(delivery([tap("wamid.tapY", "wamid.o4", "wamid.not-offered")], { pnid: P1 }));
+    await ch.webhook.handle(delivery([tap("wamid.tapZ", "wamid.o4", r1)], { pnid: P2 }));
+    tick(PENDING_TTL_MS);
+    await ch.webhook.handle(delivery([tap("wamid.tapW", "wamid.o4", r1)], { pnid: P1 }));
+    const notices = posts().slice(4);
+    expect(notices.map((p) => [p.from, bodyOf(p.body)])).toEqual([
+      [P1, TAP_AGAIN_NOTICE],
+      [P1, TAP_AGAIN_NOTICE],
+      [P2, TAP_AGAIN_NOTICE],
+      [P1, TAP_AGAIN_NOTICE],
+    ]);
+    expect(core).toHaveLength(1); // only the original, scoped message
+  });
+
+  it("when Meta refuses the buttons for good (131047) the plain hint goes out instead; a transient failure answers 500", async () => {
+    let n = 0;
+    const refused = await asked((req) => (req.body?.type === "interactive" ? graphError(WINDOW_CLOSED_CODE) : ok(`wamid.o${++n}`)));
+    expect(refused.res.status).toBe(200);
+    expect(refused.posts().slice(3).map((p) => [p.from, p.body.type])).toEqual([
+      [P1, "interactive"],
+      [P1, "text"],
+    ]);
+    expect(bodyOf(refused.posts()[4]!.body)).toBe(PICKER_FALLBACK_HINT);
+    expect(refused.store.pending.size).toBe(0);
+    let m = 0;
+    const down = await asked((req) => (req.body?.type === "interactive" ? graphError(2, 503) : ok(`wamid.o${++m}`)));
+    expect(down.res.status).toBe(500);
+    const noStore = await asked();
+    noStore.store.failOn = "waPutPending";
+    expect((await noStore.ch.webhook.handle(delivery([text("wamid.in5", "Yes")], { pnid: P1 }))).status).toBe(500);
+  });
+
+  it("4 to 10 choices are a list with cut, distinct titles; more than 10 get the plain hint", async () => {
+    const { ch, posts } = pool();
+    await ch.openThread(openerFor("t1", "Ann"));
+    await ch.openThread(openerFor("t2", "Bea")); // on P2, fresh: a reply at once is scoped
+    const choices: ThreadChoice[] = Array.from({ length: 4 }, (_, i) => ({
+      provider_ref: `wamid.r${i}`,
+      thread_id: `t${i}`,
+      title: i < 2 ? "Alexandra Konstantinopoulou-Smith" : `Bo ${i}`,
+      detail: "x".repeat(100),
+    }));
+    let asks = 0;
+    ch.onOwnerMessage(async (m) => {
+      await ch.askWhichThread!(m, asks++ === 0 ? choices : Array.from({ length: 11 }, (_, i) => ({ provider_ref: `wamid.r${i}`, thread_id: `t${i}`, title: `C${i}` })));
+      return "ignored";
+    });
+    await ch.webhook.handle(delivery([text("wamid.in1", "Yes")], { pnid: P2 }));
+    const list = posts()[2]!;
+    expect(list.from).toBe(P2);
+    const interactive = list.body.interactive as { type: string; action: { button: string; sections: Array<{ title: string; rows: Array<{ id: string; title: string; description: string }> }> } };
+    expect(interactive.type).toBe("list");
+    expect(interactive.action.button.length).toBeLessThanOrEqual(20);
+    const rows = interactive.action.sections[0]!.rows;
+    expect(rows.map((r) => r.id)).toEqual(["wamid.r0", "wamid.r1", "wamid.r2", "wamid.r3"]);
+    expect(new Set(rows.map((r) => r.title)).size).toBe(4);
+    expect(rows.every((r) => Array.from(r.title).length <= 24 && Array.from(r.description).length <= 72)).toBe(true);
+    await ch.webhook.handle(delivery([text("wamid.in2", "Yes")], { pnid: P2 }));
+    expect([posts()[3]!.from, bodyOf(posts()[3]!.body)]).toEqual([P2, PICKER_FALLBACK_HINT]);
+  });
+
+  it("titles are cut by code point, never through an emoji, and made unique", () => {
+    expect(clipLine("Zoë 👩‍🔧👩‍🔧👩‍🔧👩‍🔧👩‍🔧", 8)).toBe(Array.from("Zoë 👩‍🔧👩‍🔧").slice(0, 7).join("") + "…");
+    expect(Array.from(clipLine("😀".repeat(30), 20))).toHaveLength(20);
+    expect(distinctTitles(["Alexandra Konstantinou A", "Alexandra Konstantinou B", "Bo"], 20)).toEqual(["Alexandra Konsta… #1", "Alexandra Konsta… #2", "Bo"]);
+  });
+});
+
+describe("server wiring: the owner channel gets the store", () => {
+  it("createOwnerChannel refuses a WhatsApp pool without a store and builds it with one", () => {
+    const settings = { whatsapp_access_token: "t", whatsapp_phone_number_id: `${P1},${P2}`, whatsapp_app_secret: "s", whatsapp_verify_token: "v", owner_phone: OWNER } as unknown as RuntimeSettings;
+    const connector = {} as BookingConnector;
+    expect(() => createOwnerChannel(settings, connector)).toThrow(/number pool/);
+    const ch = createOwnerChannel(settings, connector, { store: openStore(":memory:") });
+    expect(ch?.flat).toBe(true);
+    expect(typeof ch?.askWhichThread).toBe("function");
   });
 });

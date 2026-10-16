@@ -22,6 +22,7 @@ import { createSquareConnector } from "./connectors/square.js";
 import { createSlackChannel } from "./connectors/slack.js";
 import { createTwilioChannel } from "./connectors/twilio.js";
 import { createWhatsappChannel } from "./connectors/whatsapp.js";
+import { parsePhoneNumberIds } from "./connectors/whatsapp-pool.js";
 import { ConnectorError, isBookingConnector, type BookingConnector, type CalendarConnector, type CommunicationConnector } from "./connectors/types.js";
 import { quote, rulesPricer } from "./quote.js";
 import { logOwnerChannel } from "./notify/owner.js";
@@ -48,7 +49,7 @@ export function buildOps(
   ownerChannel?: CommunicationConnector | null,
 ): Ops {
   const connector = toBookingConnector(config, c);
-  const owner = ownerChannel === undefined ? createOwnerChannel(settings, connector) : (ownerChannel ?? undefined);
+  const owner = ownerChannel === undefined ? createOwnerChannel(settings, connector, { store }) : (ownerChannel ?? undefined);
   const messages = createMessageOps({
     config,
     store,
@@ -101,14 +102,24 @@ export function webhookHandler(hook: NonNullable<CommunicationConnector["webhook
  * (notices only), else a log line for shadow-mode connectors (which need the
  * merchant to act), else nothing. The two-way channels win over Twilio because
  * only they carry owner replies. Throws when a channel is only partly
- * configured, so a typo never silently falls back to another channel.
+ * configured, so a typo never silently falls back to another channel, and when
+ * WhatsApp lists several numbers (a pool) but no `store` is given to route them.
  */
-export function createOwnerChannel(settings: RuntimeSettings, connector: BookingConnector, warn: (m: string) => void = (m) => console.warn(m)): CommunicationConnector | undefined {
+export function createOwnerChannel(
+  settings: RuntimeSettings,
+  connector: BookingConnector,
+  opts: { store?: Store; warn?: (m: string) => void } = {},
+): CommunicationConnector | undefined {
+  const warn = opts.warn ?? ((m: string) => console.warn(m));
   const slack = createSlackChannel(settings);
-  const whatsapp = createWhatsappChannel(settings);
+  const whatsapp = createWhatsappChannel(settings, { store: opts.store });
   const twilio = createTwilioChannel(settings);
   const names = [slack && "Slack", whatsapp && "WhatsApp", twilio && "Twilio"].filter(Boolean) as string[];
   if (names.length > 1) warn(`[gateway] ${names.join(", ")} are all configured; using ${names[0]} for owner messages (unset the other channels' vars to silence this)`);
+  if (!slack && whatsapp) {
+    const pool = parsePhoneNumberIds(settings.whatsapp_phone_number_id);
+    if (pool.length > 1) console.log(`[gateway] WhatsApp number pool: ${pool.length} numbers, one chat per conversation`);
+  }
   return slack ?? whatsapp ?? twilio ?? (connector.ownerNotes ? logOwnerChannel() : undefined);
 }
 
@@ -211,7 +222,7 @@ export function createApp(
   const ipOpts = { trustCfHeader: settings.trust_cf_connecting_ip && Array.isArray(settings.trust_proxy), debug: settings.trust_proxy_debug };
   app.use(hostValidation(settings.host, settings.allowed_hosts, sendError));
   // A provider webhook (WhatsApp) verifies a signature over the raw bytes, so it is mounted before the JSON parser.
-  const owner = deps.owner === undefined ? createOwnerChannel(settings, connector) : (deps.owner ?? undefined);
+  const owner = deps.owner === undefined ? createOwnerChannel(settings, connector, { store }) : (deps.owner ?? undefined);
   if (owner?.webhook) app.all(owner.webhook.path, requestRateLimit(config.limits, sendError, ipOpts), express.raw({ type: () => true, limit: "256kb" }), webhookHandler(owner.webhook));
   app.use(express.json());
 
@@ -316,10 +327,12 @@ async function main() {
     warnIfEphemeralDb(settings.db_path);
     const connector = createConnector(config, settings);
     await connector.checkAccess();
+    // Opened before the owner channel: a WhatsApp number pool keeps its assignments there, and createApp shares it.
+    const store = openStore(settings.db_path);
     // Created here (not inside createApp) so its startup check fails the boot with a fix hint, like the connector's.
-    const owner = createOwnerChannel(settings, toBookingConnector(config, connector));
+    const owner = createOwnerChannel(settings, toBookingConnector(config, connector), { store });
     if (settings.messages_enabled) await checkOwnerChannel(owner);
-    const app = createApp(config, settings, { connector, owner: owner ?? null });
+    const app = createApp(config, settings, { connector, store, owner: owner ?? null });
     const messages = app.locals.messages as MessageOps | undefined;
     const demo = app.locals.demo as DemoWiring | undefined;
     console.log(`[gateway] ${describeTrustProxy(settings.trust_proxy, settings.trust_cf_connecting_ip)}`);
