@@ -10,7 +10,7 @@
 //          each access token expires.
 
 import { randomBytes } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ConnectorError } from "./types.js";
 import { SQUARE_VERSION } from "./square.js";
 
@@ -117,14 +117,17 @@ export async function listLocations(env: SquareEnv, accessToken: string, fetchIm
 /**
  * Listen on localhost for Square's redirect and resolve with the code once a
  * request arrives with the expected state. Rejects on timeout or a Square error.
+ * A redirect carrying another state (a tab or link from an earlier run) is
+ * refused and reported through `onIgnored`; the wait goes on.
  */
-export function waitForCallback(port: number, state: string, timeoutMs = 10 * 60_000): Promise<string> {
+export function waitForCallback(port: number, state: string, timeoutMs = 10 * 60_000, onIgnored?: (why: string) => void): Promise<string> {
   return new Promise((resolve, reject) => {
+    let done = false;
     const esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
     // Query values come from whoever hit the listener; never put them in the page raw.
     const page = (title: string, body: string) =>
       `<!doctype html><meta charset="utf-8"><title>${esc(title)}</title><body style="font-family:system-ui;margin:3rem"><h1>${esc(title)}</h1><p>${esc(body)}</p>`;
-    const server = createServer((req, res) => {
+    const handler = (req: IncomingMessage, res: ServerResponse) => {
       const u = new URL(req.url ?? "/", `http://localhost:${port}`);
       if (u.pathname !== "/callback") {
         res.writeHead(404).end();
@@ -133,23 +136,39 @@ export function waitForCallback(port: number, state: string, timeoutMs = 10 * 60
       const err = u.searchParams.get("error");
       const code = u.searchParams.get("code");
       const okState = u.searchParams.get("state") === state;
-      if (err || !code || !okState) {
-        const why = err ? `${err}: ${u.searchParams.get("error_description") ?? ""}` : !okState ? "state mismatch (stale or forged link)" : "no code";
+      if (!err && !okState) {
+        res.writeHead(400, { "content-type": "text/html" }).end(page("Old Square link", "This redirect came from an earlier link. Open the link the terminal shows now and click Allow again."));
+        onIgnored?.("redirect from an older Square link (state mismatch)");
+        return;
+      }
+      if (err || !code) {
+        const why = err ? `${err}: ${u.searchParams.get("error_description") ?? ""}` : "no code";
         res.writeHead(400, { "content-type": "text/html" }).end(page("Square authorisation failed", `${why}. Go back to the terminal.`));
-        if (okState || err) finish(new Error(`Square authorisation failed: ${why}`));
+        finish(new Error(`Square authorisation failed: ${why}`));
         return;
       }
       res.writeHead(200, { "content-type": "text/html" }).end(page("Square connected", "You can close this tab and return to the terminal."));
       finish(undefined, code);
+    };
+    // Browsers resolve localhost to ::1 or 127.0.0.1, so listen on both loopbacks.
+    // IPv6 may be switched off; IPv4 may not.
+    const servers = ["127.0.0.1", "::1"].map((host) => {
+      const server = createServer(handler);
+      server.on("error", (e: NodeJS.ErrnoException) => {
+        if (host === "::1" && (e.code === "EADDRNOTAVAIL" || e.code === "EAFNOSUPPORT")) return;
+        finish(new Error(`cannot listen on ${host === "::1" ? "[::1]" : host}:${port}: ${e.message}`));
+      });
+      server.listen(port, host);
+      return server;
     });
     const timer = setTimeout(() => finish(new Error(`no response from Square within ${Math.round(timeoutMs / 60_000)} minutes`)), timeoutMs);
     const finish = (e: Error | undefined, code?: string) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
-      server.close();
+      for (const s of servers) s.close();
       e ? reject(e) : resolve(code!);
     };
-    server.on("error", (e) => finish(new Error(`cannot listen on port ${port}: ${e.message}`)));
-    server.listen(port, "127.0.0.1");
   });
 }
 

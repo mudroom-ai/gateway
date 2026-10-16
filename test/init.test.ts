@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
-import { EXISTING_ITEMS, GOAL_ITEMS, GOOGLE_SETUP_STEPS, INTRO, READY_ITEMS, buildEnvFile, guideUrl, parseHours, renderHours, runInit, validGlossGeniusUrl } from "../src/cli/init.js";
+import { GOAL_ITEMS, existingItems, GOOGLE_SETUP_STEPS, INTRO, READY_ITEMS, buildEnvFile, guideUrl, parseHours, renderHours, runInit, validGlossGeniusUrl } from "../src/cli/init.js";
 import { checkWhatsapp, validWhatsappPhone, validWhatsappPhoneId, type WhatsappAnswer } from "../src/cli/init-channel.js";
 import { FakeCalendarConnector } from "./helpers/fake-calendar.js";
 import { ScriptedPrompter } from "./helpers/scripted-prompter.js";
@@ -749,7 +749,7 @@ describe("init wizard (interactive)", () => {
     const before = [readFileSync(join(dir, "config.json"), "utf8"), readFileSync(join(dir, ".env"), "utf8")];
     const keep = await interactive(dir, [""]); // Enter: Keep is the default once a booking system is connected
     expect(keep.code).toBe(0);
-    expect(keep.prompter.choices[0]).toEqual(EXISTING_ITEMS);
+    expect(keep.prompter.choices[0]).toEqual(existingItems(true).items);
     expect([readFileSync(join(dir, "config.json"), "utf8"), readFileSync(join(dir, ".env"), "utf8")]).toEqual(before);
     expect(keep.out).toContain("nothing was changed");
     expect(keep.out).toContain("curl localhost:4000/api/services");
