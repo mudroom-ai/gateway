@@ -22,6 +22,12 @@ Non-interactive: `npm run init -- --square` with `SQUARE_ACCESS_TOKEN`, `SQUARE_
 
 **Do not use the dashboard's personal access token.** It carries `APPOINTMENTS_ALL_WRITE`, which makes every call seller-level, and Square then refuses writes unless the merchant pays for Appointments Plus. In the sandbox, create a second test account and authorise it through the wizard; open that account in the same browser first or the consent page renders blank.
 
+If the wizard does not move on after you click **Allow**:
+
+- **The terminal still says "Waiting for Square to redirect…" and the browser is not on `localhost:3099/callback`.** Square sent you to the Redirect URL saved on the app's OAuth page, and that is not `http://localhost:3099/callback` on the tab (Sandbox or Production) you chose. Fix it there and run the link again.
+- **The browser says "Old Square link" and the terminal says "Ignored a redirect from an older Square link".** The tab came from an earlier run. Open the link the terminal shows now.
+- **The browser says "localhost refused to connect".** The wizard is not waiting: it is on another question, it timed out after 10 minutes, or it has exited. Once you have clicked Allow, Square redirects at once, so an old tab reloads straight to `localhost`. Run `npm run init` to the "Waiting for Square" line and use the link it prints.
+
 Hosting notes: [deploy.md §1d](../deploy.md#1d-square-instead-of-google).
 
 ## Use cases
@@ -71,4 +77,4 @@ It cannot:
 
 ## Tests
 
-`test/square.test.ts` scripts Square with a route table and logs every call: service listing, 24-hour availability widening, booking (customer creation, slot re-check, idempotency key pass-through), `slot_unavailable` and `invalid_customer`, cancel with the current version and the already-cancelled no-op, reschedule keeping the id, 401/403 and 5xx mapping, phone normalisation. `test/square-oauth.test.ts` covers the authorise link and scopes, code exchange, token refresh timing, the callback listener's state check, and HTML escaping on the callback page. `test/init.test.ts` covers the wizard's Square path.
+`test/square.test.ts` scripts Square with a route table and logs every call: service listing, 24-hour availability widening, booking (customer creation, slot re-check, idempotency key pass-through), `slot_unavailable` and `invalid_customer`, cancel with the current version and the already-cancelled no-op, reschedule keeping the id, 401/403 and 5xx mapping, phone normalisation. `test/square-oauth.test.ts` covers the authorise link and scopes, code exchange, token refresh timing, the callback listener's state check (a stale link is reported, not accepted), answering on both `127.0.0.1` and `::1`, and HTML escaping on the callback page. `test/init.test.ts` covers the wizard's Square path.

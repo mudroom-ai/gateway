@@ -54,12 +54,15 @@ describe("Square OAuth", () => {
     expect(warnings[0]).toContain("bad secret");
   });
 
-  it("the callback listener accepts the code only with the expected state", async () => {
+  it("the callback listener accepts the code only with the expected state, and reports the stale one", async () => {
     const port = 3000 + Math.floor(Math.random() * 20000);
-    const pending = waitForCallback(port, "good", 5000);
+    const ignored: string[] = [];
+    const pending = waitForCallback(port, "good", 5000, (why) => ignored.push(why));
     const bad = await fetch(`http://127.0.0.1:${port}/callback?code=x&state=forged`);
     expect(bad.status).toBe(400);
-    const ok = await fetch(`http://127.0.0.1:${port}/callback?code=the-code&state=good`);
+    expect(ignored).toEqual(["redirect from an older Square link (state mismatch)"]);
+    // localhost may resolve to ::1 first; the listener answers there too.
+    const ok = await fetch(`http://[::1]:${port}/callback?code=the-code&state=good`);
     expect(ok.status).toBe(200);
     expect(await pending).toBe("the-code");
   });
