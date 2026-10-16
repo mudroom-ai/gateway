@@ -30,8 +30,11 @@
 // Owners sometimes answer in the channel instead of the thread. A top-level message (no provider_ref) counts as the reply when
 // exactly one thread is awaiting the owner: it is stored and acknowledged like a
 // thread reply and mirrored into that thread so the record is in one place. With
-// several waiting, the channel gets one short hint (at most once a minute) and the
-// message is ignored; with none, it is ignored silently.
+// several waiting, a channel that can ask (askWhichThread) asks "which customer?" for
+// every such message; any other channel gets one short hint (at most once a minute).
+// Either way the message is ignored here; with none waiting, it is ignored silently.
+// A channel that could not route a message itself (WhatsApp number pool) sends
+// scope_refs: the core then never auto-matches and asks over the open threads among them.
 //
 // Delivery is reconcile-first, like book.ts: every outbox row carries a dedupe key
 // (<thread_id>:<outbox id>) that the channel attaches to the post. The first attempt
@@ -53,7 +56,15 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config, RuntimeSettings } from "./config.js";
 import { normalizeCustomer, validateCustomer } from "./book.js";
-import { ConnectorError, supportsThreads, type CommunicationConnector, type OwnerInboundMessage, type OwnerMessageHandler } from "./connectors/types.js";
+import {
+  ConnectorError,
+  FLAT_REPLY_HINT,
+  supportsThreads,
+  type CommunicationConnector,
+  type OwnerInboundMessage,
+  type OwnerMessageHandler,
+  type ThreadChoice,
+} from "./connectors/types.js";
 import { err, ok, type GatewayError, type Result } from "./errors.js";
 import { contactKeys, messageRateLimit } from "./middleware/ratelimit.js";
 import { bookedThreadNotice } from "./notify/owner.js";
@@ -196,6 +207,8 @@ export const SEVERAL_WAITING_HINT = "Several customers are waiting; please reply
 /** The same hint for a flat channel (no threads): the owner quotes the message instead. */
 export const SEVERAL_WAITING_HINT_FLAT = "Several customers are waiting; please swipe to reply on the message for each.";
 const HINT_EVERY_MS = 60_000;
+/** Longest `detail` of a "which customer?" choice, in code points. */
+export const CHOICE_DETAIL_CHARS = 72;
 /** A fetched top-level message is matched to a thread only if no thread changed from this long before it was sent (clocks differ). */
 export const BACKFILL_SKEW_MS = 10_000;
 /** channel_state key of the channel's catch-up cursor. */
@@ -384,7 +397,7 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
       t.mode !== "two_way"
         ? "Replies cannot be passed back from here: contact the customer directly."
         : channel?.flat
-          ? "Reply to this message (swipe to reply) and the assistant will pass it on; a plain reply works too when this is the only customer waiting. If the assistant does not come back, the customer's contact is above."
+          ? FLAT_REPLY_HINT
           : "Reply in this thread and the assistant will pass it on. If the assistant does not come back, the customer's contact is above.",
     );
     return lines.join("\n");
@@ -430,7 +443,7 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     }
     if (!supportsThreads(channel)) throw new ConnectorError("channel_rejected", "owner channel cannot carry threads");
     const dedupe_key = dedupeKey(t.thread_id, outboxId);
-    if (kind === "open") return (await channel.openThread({ thread_id: t.thread_id, text, dedupe_key })).provider_ref;
+    if (kind === "open") return (await channel.openThread({ thread_id: t.thread_id, text, dedupe_key, customer_name: t.customer.name })).provider_ref;
     await channel.postToThread(t.provider_ref!, text, { dedupe_key });
     return undefined;
   }
@@ -754,24 +767,98 @@ export function createMessageOps(deps: MessageDeps): MessageOps | undefined {
     return "accepted";
   }
 
-  /** A top-level owner message: the reply to the one waiting thread, a hint when several wait, nothing when none do. */
+  /** The several-waiting hint, at most once a minute. Not for a message fetched after a gap: it would arrive long after the owner typed. */
+  function hint(m: OwnerInboundMessage): void {
+    const nowMs = clock().getTime();
+    if (m.backfilled || nowMs - lastHintMs < HINT_EVERY_MS) return;
+    lastHintMs = nowMs;
+    try {
+      channel!.notify(channel!.flat ? SEVERAL_WAITING_HINT_FLAT : SEVERAL_WAITING_HINT).catch((e) => log(`[gateway] owner hint failed: ${errMsg(e)}`));
+    } catch (e) {
+      log(`[gateway] owner hint failed: ${errMsg(e)}`);
+    }
+  }
+
+  /**
+   * Ask the owner which thread the message answers (askWhichThread), else the hint. Awaited, once per message, no rate
+   * limit: a throw propagates so the provider redelivers. Nothing is asked about a message fetched after a gap.
+   */
+  async function askOrHint(m: OwnerInboundMessage, candidates: ThreadRow[]): Promise<void> {
+    if (!channel!.askWhichThread) return hint(m);
+    if (m.backfilled) return;
+    await channel!.askWhichThread(m, threadChoices(candidates));
+    log(`[gateway] top-level owner message: asked which customer (${candidates.length} choices)`);
+  }
+
+  /** The open two-way threads of this merchant among `refs`, oldest first. */
+  function openInScope(refs: string[]): ThreadRow[] {
+    const out: ThreadRow[] = [];
+    for (const ref of new Set(refs)) {
+      const t = typeof ref === "string" ? store.getThreadByProviderRef(ref) : null;
+      if (t && t.merchant_id === merchant && t.mode === "two_way" && t.state !== "closed") out.push(t);
+    }
+    return out.sort((a, b) => (a.created_at === b.created_at ? (a.thread_id < b.thread_id ? -1 : 1) : a.created_at < b.created_at ? -1 : 1));
+  }
+
+  /**
+   * One choice per thread: the customer's name, plus a suffix where names collide (case-insensitive): the service, else
+   * the phone's last 4 digits, else the thread id, whichever first tells that group apart. Detail: the latest agent message.
+   */
+  function threadChoices(threads: ThreadRow[]): ThreadChoice[] {
+    // Config only (no catalog call): a Square service id shows as itself.
+    const serviceName = (id: string) => [...config.services, ...config.ask_services].find((x) => x.id === id)?.name ?? id;
+    const suffixes: ((t: ThreadRow) => string | undefined)[] = [
+      (t) => (t.service_id ? serviceName(t.service_id) : undefined),
+      (t) => {
+        const digits = (t.customer.phone ?? "").replace(/\D/g, "");
+        return digits.length >= 4 ? digits.slice(-4) : undefined;
+      },
+      (t) => t.thread_id.slice(-4),
+      (t) => t.thread_id,
+    ];
+    const name = (t: ThreadRow) => t.customer.name.trim();
+    const groups = new Map<string, ThreadRow[]>();
+    for (const t of threads) groups.set(name(t).toLowerCase(), [...(groups.get(name(t).toLowerCase()) ?? []), t]);
+    const titles = new Map<string, string>();
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        titles.set(group[0]!.thread_id, name(group[0]!));
+        continue;
+      }
+      // The last suffix (the full thread id) always tells them apart.
+      const pick = suffixes.find((f) => {
+        const vals = group.map(f);
+        return vals.every(Boolean) && new Set(vals.map((v) => v!.toLowerCase())).size === group.length;
+      })!;
+      for (const t of group) titles.set(t.thread_id, `${name(t)} (${pick(t)})`);
+    }
+    return threads.map((t) => {
+      const last = store.listThreadMessages(t.thread_id).filter((x) => x.author === "agent").at(-1);
+      const line = last?.text.replace(/\s+/g, " ").trim();
+      const cps = line ? [...line] : [];
+      const detail = cps.length > CHOICE_DETAIL_CHARS ? `${cps.slice(0, CHOICE_DETAIL_CHARS - 1).join("")}…` : line || undefined;
+      return { provider_ref: t.provider_ref!, thread_id: t.thread_id, title: titles.get(t.thread_id)!, ...(detail ? { detail } : {}) };
+    });
+  }
+
+  /**
+   * A top-level owner message: the reply to the one waiting thread, a question (or hint) when several wait, nothing when
+   * none do. With scope_refs (a channel that could not route it) it never auto-matches: it asks over the open threads in scope.
+   */
   async function ownerTopLevel(m: OwnerInboundMessage, close: boolean): Promise<OwnerOutcome> {
     const text = typeof m.text === "string" ? m.text.normalize("NFC").trim() : "";
     // Dedup first: a redelivered message must not be matched to a different thread now waiting.
     if (!text || !m.provider_msg_id || store.hasProviderMessage(m.provider_msg_id)) return "ignored";
+    if (Array.isArray(m.scope_refs)) {
+      const open = openInScope(m.scope_refs);
+      if (open.length > 0) await askOrHint(m, open);
+      log(`[gateway] top-level owner message not routed by the channel: ${open.length} open threads in scope`);
+      return "ignored";
+    }
     const waiting = store.listAwaitingOwnerThreads(merchant);
     if (waiting.length === 0) return "ignored";
     if (waiting.length > 1) {
-      const nowMs = clock().getTime();
-      // No hint for a message fetched after a gap: it would arrive long after the owner typed.
-      if (!m.backfilled && nowMs - lastHintMs >= HINT_EVERY_MS) {
-        lastHintMs = nowMs;
-        try {
-          channel!.notify(channel!.flat ? SEVERAL_WAITING_HINT_FLAT : SEVERAL_WAITING_HINT).catch((e) => log(`[gateway] owner hint failed: ${errMsg(e)}`));
-        } catch (e) {
-          log(`[gateway] owner hint failed: ${errMsg(e)}`);
-        }
-      }
+      await askOrHint(m, waiting);
       log(`[gateway] top-level owner message ignored: ${waiting.length} threads awaiting the owner`);
       return "ignored";
     }

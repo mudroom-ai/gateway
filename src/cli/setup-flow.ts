@@ -326,7 +326,7 @@ export async function collectWebSetup(session: WebSetup, ctx: Context): Promise<
         if (values.has("twilio-from")) channelAns = { owner: ownerSms({ phone: text("owner-phone"), sid: text("twilio-sid"), token: text("twilio-token"), from: text("twilio-from") }) };
       } else if (!channelLater && channel === 3) {
         ask("owner-phone", "Your WhatsApp number (e.g. +1 202 555 0199)", flag("owner-phone") ?? known("OWNER_PHONE"), validWhatsappPhone);
-        ask("whatsapp-phone-id", "Phone number ID", flag("whatsapp-phone-id") ?? known("WHATSAPP_PHONE_NUMBER_ID"), validWhatsappPhoneId, [{ text: "WhatsApp → API Setup. A number, not the phone number itself." }]);
+        ask("whatsapp-phone-id", "Phone number ID", flag("whatsapp-phone-id") ?? known("WHATSAPP_PHONE_NUMBER_ID"), validWhatsappPhoneId, [{ text: "WhatsApp → API Setup. A number, not the phone number itself. One or more, comma-separated, for one chat per customer." }]);
         ask("whatsapp-token", "Access token", flag("whatsapp-token") ?? known("WHATSAPP_ACCESS_TOKEN"), requireLine("Access token"), [{ text: "From WhatsApp → API Setup (24-hour test token) or a System User token (permanent)." }], true);
         ask("whatsapp-app-secret", "App Secret", flag("whatsapp-app-secret") ?? known("WHATSAPP_APP_SECRET"), requireLine("App Secret"), [{ text: "App settings → Basic → App Secret. It signs each webhook delivery." }], true);
         ask("whatsapp-template", "Approved template for messages outside the 24-hour window, name or name:lang (Enter = none)", flag("whatsapp-template") ?? known("WHATSAPP_TEMPLATE"), (s) => s, [{ text: "Optional. Leave blank for the test number: just message it from your phone first." }]);
