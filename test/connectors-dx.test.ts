@@ -9,7 +9,7 @@ import { SETUP_GUIDES } from "../src/cli/init.js";
 const CONNECTORS = ["google", "square", "glossgenius", "twilio", "slack", "whatsapp"] as const;
 
 /** Files under src/connectors that are not connectors themselves. */
-const HELPERS = new Set(["types.ts", "calendar.ts", "square-oauth.ts", "slack-socket.ts"]);
+const HELPERS = new Set(["types.ts", "calendar.ts", "square-oauth.ts", "slack-socket.ts", "whatsapp-pool.ts"]);
 
 const REQUIRED_HEADINGS = ["Overview", "Prerequisites", "Setup", "Use cases", "Limitations", "Errors", "Env vars", "Tests"];
 

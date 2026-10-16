@@ -140,6 +140,13 @@ export interface CommunicationConnector {
    * `ctx` lets the channel fetch what it missed while disconnected (see ChannelContext).
    */
   onOwnerMessage?(handler: OwnerMessageHandler, ctx?: ChannelContext): void;
+  /**
+   * Ask the owner which waiting conversation a top-level message answers (WhatsApp: reply buttons or a list), instead of
+   * the plain "several customers are waiting" hint. The channel keeps the original message and, when the owner picks,
+   * hands it to the handler again with the chosen `provider_ref`. The core awaits it once per ambiguous message: a throw
+   * propagates so the provider redelivers (the channel must not lose the owner's text).
+   */
+  askWhichThread?(m: OwnerInboundMessage, choices: ThreadChoice[]): Promise<void>;
   /** Best-effort visible acknowledgement of an owner message (Slack: a ✅ reaction, keyed by the message id even when it is top-level). Never throws. */
   acknowledge?(provider_ref: string, provider_msg_id: string): Promise<void>;
   /** Open the inbound connection (Slack Socket Mode). Resolves once connected and caught up on missed replies; reconnects on its own afterwards. */
@@ -218,7 +225,27 @@ export interface OwnerInboundMessage {
    * that no thread changed since `sent_at_ms` before matching it to the waiting thread. Required with `backfilled`.
    */
   sent_at_ms?: number;
+  /**
+   * Set by a channel whose conversations live in several places (WhatsApp number pool: the open threads on the number
+   * the owner wrote to) when it could not route the message itself. The core then never auto-matches, not even a single
+   * candidate: it asks with `askWhichThread` over the open threads (awaiting or answered) among these refs, or ignores
+   * the message when none is open. Without `askWhichThread` it falls back to the several-waiting hint. Undefined means
+   * the usual top-level matching over every thread of the merchant.
+   */
+  scope_refs?: string[];
 }
+
+/** One option of `askWhichThread`. `title` is short and unique among the choices; `detail` is one line. */
+export interface ThreadChoice {
+  provider_ref: string;
+  thread_id: string;
+  title: string;
+  detail?: string;
+}
+
+/** Last line of the opener on a flat channel (no threads). Exported so a channel can swap it when one chat holds one conversation. */
+export const FLAT_REPLY_HINT =
+  "Reply to this message (swipe to reply) and the assistant will pass it on; a plain reply works too when this is the only customer waiting. If the assistant does not come back, the customer's contact is above.";
 
 /**
  * Returns "accepted" (persisted), "ignored" (unknown thread, duplicate, empty, or a

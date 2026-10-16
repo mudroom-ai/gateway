@@ -5,6 +5,7 @@
 // that were returned to the caller.
 
 import { DatabaseSync } from "node:sqlite";
+import type { WaAssignment, WaOpenThread, WaPending, WaTakeResult, WhatsappPoolStore } from "../connectors/whatsapp-pool.js";
 import type { AppliedRule, Booking, BookingState, Cents, Customer, QuoteState, Slot } from "../types.js";
 
 export interface QuoteRow {
@@ -288,7 +289,7 @@ function toOutbox(r: Raw): OutboxRow {
   };
 }
 
-export class Store {
+export class Store implements WhatsappPoolStore {
   readonly db: DatabaseSync;
 
   constructor(path: string) {
@@ -741,6 +742,52 @@ export class Store {
 
   deleteMessageRequest(merchantId: string, idemKey: string): void {
     this.db.prepare("DELETE FROM message_requests WHERE merchant_id = ? AND idem_key = ?").run(merchantId, idemKey);
+  }
+
+  // ---- WhatsApp number pool (src/connectors/whatsapp-pool.ts) ----
+
+  waAssign(_q: { thread_id: string; owner_phone: string; pool: string[]; now_ms: number }): WaAssignment {
+    throw new Error("not implemented");
+  }
+
+  waNumberForRef(_providerRef: string): string | null {
+    throw new Error("not implemented");
+  }
+
+  waOpenOn(_q: { number_id: string; owner_phone: string; is_primary: boolean }): WaOpenThread[] {
+    throw new Error("not implemented");
+  }
+
+  waMarkAccepted(_threadId: string, _openerWamid: string, _atMs: number): void {
+    throw new Error("not implemented");
+  }
+
+  waMarkRead(_openerWamid: string, _atMs: number): void {
+    throw new Error("not implemented");
+  }
+
+  waConfirm(_threadId: string, _atMs: number): void {
+    throw new Error("not implemented");
+  }
+
+  waTouchWindow(_numberId: string, _ownerPhone: string, _atMs: number): void {
+    throw new Error("not implemented");
+  }
+
+  waPutPending(_p: WaPending): void {
+    throw new Error("not implemented");
+  }
+
+  waHasPending(_origWamid: string): boolean {
+    throw new Error("not implemented");
+  }
+
+  waTakePending(_q: { prompt_wamid: string; chosen_ref: string; number_id: string; now_ms: number }): WaTakeResult {
+    throw new Error("not implemented");
+  }
+
+  waOrphanNumbers(_pool: string[], _ownerPhone: string): string[] {
+    throw new Error("not implemented");
   }
 }
 
