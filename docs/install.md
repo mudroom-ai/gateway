@@ -16,7 +16,7 @@ less install.sh
 sh install.sh
 ```
 
-The script clones into `~/gateway` (override with `GATEWAY_DIR`), builds, and runs the setup wizard. Running it again moves the checkout to the latest release; the wizard then finds your `config.json` and asks whether to keep it as it is, review and update it, or start over.
+The script clones into `~/gateway` (override with `GATEWAY_DIR`), builds, and runs the setup wizard. Running it again moves the checkout to the latest release; the wizard then finds your `config.json` and asks whether to keep it as it is, change one part, review and update it, or start over.
 
 The one-liner installs the latest tagged release (the highest `vX.Y.Z` tag), or `main` if there are no tags yet. It prints the ref it chose. Set `GATEWAY_REF` to install something else: a tag, a branch or a commit sha.
 
@@ -32,7 +32,7 @@ A first run then opens with a few lines on what Mudroom does and what the wizard
 
 You can skip the booking system for now: answer *Not yet, finish later* to "Ready to connect?", or run `npm run init -- --no-backend`. The wizard says that nothing is connected for now, then asks only for your name, time zone and currency (plus services and hours when it read some from your website, so that reading is not lost) and ends with the setup steps for the system you picked. The files are written, but Mudroom will not start until the `GOOGLE_*` or `SQUARE_*` variables are set ([connectors/](connectors/README.md)).
 
-Run the wizard again any time with `npm run init`: after the terminal-or-browser question, it finds the saved files and asks *Keep it as it is* (change nothing), *Review and update* (your saved answers are the defaults and your `config.json` and `.env` edits are kept) or *Start over* (the saved answers are ignored and both files are replaced when the wizard finishes). `npm run init -- --help` lists the flags for a non-interactive run; `--force` starts over.
+Run the wizard again any time with `npm run init`: after the terminal-or-browser question, it finds the saved files and asks *Keep it as it is* (change nothing), *Change one part* (pick business details, services and hours, booking system or owner channel and answer only its questions; everything else in `config.json` and `.env` stays as saved, so you can add WhatsApp without re-entering your Google Calendar setup), *Review and update* (your saved answers are the defaults and your `config.json` and `.env` edits are kept) or *Start over* (the saved answers are ignored and both files are replaced when the wizard finishes). `npm run init -- --help` lists the flags for a non-interactive run; `--force` starts over.
 
 Both the browser and terminal show a friendly suggested time zone with a local-time preview. Saved selections come first, followed by a website suggestion, then detection from your browser or terminal machine. Choose **Change time zone** to search by city, country or regional name (for example, San Francisco or Pacific Time). Select a result and confirm it; Mudroom stores the time-zone ID automatically, including its daylight-saving rules. The `--timezone` flag still accepts an IANA ID for scripted setup.
 
