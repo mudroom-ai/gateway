@@ -222,11 +222,11 @@ export const CHANNEL_GUIDES: Record<"slack" | "whatsapp" | "twilio", SetupGuide>
 
 export const OWNER_CHANNEL_ITEMS = ["None", "Slack (agent messages you can reply to, plus booking notices)", "Twilio SMS (booking notices only)", "WhatsApp (agent messages you can reply to, plus booking notices)"] as const;
 
-/** Interactive: pick none, Slack, Twilio or WhatsApp, then ask for that channel's settings. */
+/** Interactive: pick none, Slack, Twilio or WhatsApp, then ask for that channel's settings. Resolves undefined when a channel not set up yet is left for later ("Finish later"), {} when None is picked. */
 export async function askOwnerChannel(
   p: Prompter,
   ctx: { known: (k: string) => string | undefined; flags: ChannelFlags; log: (m: string) => void; glossgenius: boolean; askValid: AskValid; /** Pre-select Slack when nothing is saved or flagged. */ preferSlack?: boolean; /** With it, a channel not set up yet shows its guide first. */ guide?: GuideIO },
-): Promise<ChannelAnswers> {
+): Promise<ChannelAnswers | undefined> {
   const { known, flags: f, log, askValid } = ctx;
   log(style.dim("\nOptional: how you hear from agents. Slack carries agent messages you answer by typing in the thread (docs/connectors/slack.md);"));
   log(style.dim("WhatsApp does the same on your phone (docs/connectors/whatsapp.md); Twilio texts your phone about each booking, cancel and reschedule (docs/connectors/twilio.md)."));
@@ -250,7 +250,7 @@ export async function askOwnerChannel(
   if (picked && ctx.guide) {
     if (!(await showGuide(p, picked, ctx.guide))) {
       log(`${picked.label} left off for now. Run \`npm run init\` again to add it.`);
-      return {};
+      return undefined;
     }
   } else if (choice === 1) {
     log(style.dim("Slack: create an app at https://api.slack.com/apps, turn on Socket Mode, add the bot scopes and events from docs/connectors/slack.md,"));

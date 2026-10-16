@@ -55,6 +55,7 @@ import {
   defaultSlackFactory,
   defaultWhatsappFactory,
   whatsappWebhookLines,
+  type ChannelAnswers,
   type OwnerSms,
   type SlackAnswer,
   type SlackCheckFactory,
@@ -121,7 +122,141 @@ export const EXISTING_DESCRIPTION = [
   "  Review and update: go through the questions with your saved answers as the defaults",
   "  Start over: ignore the saved answers; config.json and .env are replaced when the wizard finishes",
 ];
-const [EXISTING_KEEP, , EXISTING_RESET] = [0, 1, 2];
+export type ExistingAction = "keep" | "part" | "review" | "reset";
+/** The last question of a "Change one part" run in the terminal, which cannot go back to a question. */
+const SAVE_ITEMS: PickItem[] = [{ emoji: "✅", label: "Save and finish" }, { emoji: "🚪", label: "Exit without saving" }];
+const PART_ITEM: PickItem = { emoji: "🔧", label: "Change one part" };
+const PART_DESCRIPTION = "  Change one part: pick what to change; everything else stays as it is";
+/**
+ * The Existing setup menu. "Change one part" needs saved answers to keep, so it is offered only
+ * when config.json was read; the picked index maps back to its action through `actions`.
+ */
+export function existingItems(hasConfig: boolean): { actions: ExistingAction[]; items: PickItem[]; description: string[] } {
+  if (!hasConfig) return { actions: ["keep", "review", "reset"], items: EXISTING_ITEMS, description: EXISTING_DESCRIPTION };
+  return {
+    actions: ["keep", "part", "review", "reset"],
+    items: [EXISTING_ITEMS[0]!, PART_ITEM, ...EXISTING_ITEMS.slice(1)],
+    description: [EXISTING_DESCRIPTION[0]!, PART_DESCRIPTION, ...EXISTING_DESCRIPTION.slice(1)],
+  };
+}
+
+/** The parts "Change one part" offers; each run changes one (plus a part it needs, see runInit). */
+export type PartKey = "business" | "services" | "booking" | "channel";
+const SYSTEM_LABELS = ["Google Calendar", "Square Appointments", "GlossGenius"] as const;
+/** The booking system a saved .env names (the picker's index), or undefined when none is complete. */
+export function savedSystem(env: Record<string, string>): 0 | 1 | 2 | undefined {
+  if (env.SQUARE_ACCESS_TOKEN && env.SQUARE_LOCATION_ID) return 1;
+  if (!((env.GOOGLE_SERVICE_ACCOUNT_FILE || env.GOOGLE_SERVICE_ACCOUNT_JSON) && env.GOOGLE_CALENDAR_ID)) return undefined;
+  return env.GLOSSGENIUS_BOOKING_URL ? 2 : 0;
+}
+/** One line naming an owner channel, never a token: Slack shows the channel ID, phones are masked. */
+export function channelLabel(c: ChannelAnswers): string {
+  if (c.slack) return `Slack ${c.slack.channelId}`;
+  if (c.whatsapp) return `WhatsApp ${maskPhone(c.whatsapp.phone)}`;
+  if (c.owner) return `Twilio SMS ${maskPhone(c.owner.phone)}`;
+  return "none";
+}
+/** The owner channel a saved .env names, read like the full walk carries it; {} when none or unreadable. */
+export function savedChannel(env: Record<string, string>): ChannelAnswers {
+  try {
+    return channelFromFlags({}, env);
+  } catch {
+    return {};
+  }
+}
+/** The "What do you want to change?" menu for a saved setup. */
+export function partItems(saved: Config, savedEnv: Record<string, string>): { keys: PartKey[]; items: PickItem[]; description: string[] } {
+  const system = savedSystem(savedEnv);
+  const keys: PartKey[] = ["business"];
+  const items: PickItem[] = [{ emoji: "🏷️", label: "Business details", status: `${cleanLine(saved.name, 40)} · ${saved.timezone}` }];
+  const description = [`  Business details: name and time zone (currency ${saved.currency}: change it with Review and update)`];
+  // Square and GlossGenius supply services and hours themselves.
+  if (system === undefined || system === 0) {
+    keys.push("services");
+    items.push({ emoji: "✂️", label: "Services and hours", status: `${saved.services.length} service${saved.services.length === 1 ? "" : "s"} · ${renderHours(saved.hours)}` });
+    description.push("  Services and hours: what agents can book, and when");
+  }
+  keys.push("booking");
+  items.push({ emoji: "📅", label: "Booking system", status: system === undefined ? "not configured" : `${SYSTEM_LABELS[system]} · configured` });
+  description.push("  Booking system: Google Calendar, Square Appointments or GlossGenius, and its credentials");
+  // Channel settings need a booking system to report on (the full walk's rule).
+  if (system !== undefined) {
+    keys.push("channel");
+    items.push({ emoji: "💬", label: "Owner channel", status: channelLabel(savedChannel(savedEnv)) });
+    description.push("  Owner channel: Slack, WhatsApp or Twilio SMS, or none");
+  }
+  return { keys, items, description };
+}
+
+function backendLabel(b: Backend): string {
+  if (b.kind === "square") return `Square Appointments (location ${b.locationId})`;
+  return `${b.kind === "google" ? "Google Calendar" : "GlossGenius"} (calendar ${b.calendarId})`;
+}
+function savedBackendLabel(env: Record<string, string>): string | undefined {
+  const system = savedSystem(env);
+  if (system === undefined) return undefined;
+  return system === 1 ? `Square Appointments (location ${env.SQUARE_LOCATION_ID})` : `${SYSTEM_LABELS[system]} (calendar ${env.GOOGLE_CALENDAR_ID})`;
+}
+const sameServices = (a: readonly ServiceAnswer[], b: readonly ServiceAnswer[]) =>
+  a.length === b.length && a.every((s, i) => s.name === b[i]!.name && s.duration_min === b[i]!.duration_min && s.buffer_min === b[i]!.buffer_min && s.price_cents === b[i]!.price_cents);
+
+/**
+ * What a "Change one part" run is about to write, for the save step in both front ends: parts that
+ * ran and differ go under Changing, everything else under Keeping. Never prints a token.
+ */
+export function changeSummary(o: {
+  ran: readonly PartKey[];
+  saved: Config;
+  savedEnv: Record<string, string>;
+  answers: Answers;
+  backend: Backend | undefined;
+  channel: ChannelAnswers | "keep";
+}): { changing: string[]; keeping: string[]; warnings: string[] } {
+  const { ran, saved, savedEnv, answers } = o;
+  const changing: string[] = [];
+  const keeping: string[] = [];
+  const warnings: string[] = [];
+  const { keys } = partItems(saved, savedEnv);
+  for (const part of keys) {
+    if (part === "business") {
+      const diffs = [
+        answers.name !== saved.name ? `name ${cleanLine(saved.name, 40)} -> ${cleanLine(answers.name, 40)}` : "",
+        answers.timezone !== saved.timezone ? `time zone ${saved.timezone} -> ${answers.timezone}` : "",
+      ].filter(Boolean);
+      if (ran.includes(part) && diffs.length) changing.push(`Business details (${diffs.join(", ")})`);
+      else keeping.push(`Business details (${cleanLine(saved.name, 40)})`);
+    } else if (part === "services") {
+      const before = saved.services.length;
+      const hoursChanged = answers.hours !== renderHours(saved.hours);
+      if (ran.includes(part) && (!sameServices(answers.services, saved.services) || hoursChanged)) {
+        changing.push(`Services and hours (${answers.services.length} service${answers.services.length === 1 ? "" : "s"}, was ${before}${hoursChanged ? `; hours ${answers.hours}` : ""})`);
+      } else keeping.push(`Services and hours (${before} service${before === 1 ? "" : "s"})`);
+    } else if (part === "booking") {
+      const was = savedBackendLabel(savedEnv);
+      if (ran.includes(part) && o.backend) {
+        const now = backendLabel(o.backend);
+        if (now === was) keeping.push(`Booking system (${now}, rechecked)`);
+        else {
+          changing.push(`Booking system (${was ?? "none"} -> ${now})`);
+          if (was) warnings.push(`Bookings made through ${was} stay there; agents cannot cancel or reschedule them through the new booking system.`);
+        }
+      } else keeping.push(`Booking system (${was ?? "none"}${ran.includes(part) ? ", new one not connected" : ""})`);
+    } else {
+      const before = savedChannel(savedEnv);
+      const was = channelLabel(before);
+      if (ran.includes(part) && o.channel !== "keep") {
+        const next: ChannelAnswers = o.channel;
+        const now = channelLabel(next);
+        if (now === was && JSON.stringify(next) === JSON.stringify(before)) keeping.push(`Owner channel (${now}, rechecked)`);
+        else {
+          const dropped = (["slack", "whatsapp", "owner"] as const).filter((k) => before[k] && !next[k]).map((k) => (k === "slack" ? "Slack" : k === "whatsapp" ? "WhatsApp" : "Twilio"));
+          changing.push(`Owner channel (${was} -> ${now}${dropped.length ? `; ${dropped.join(" and ")} settings removed from .env` : ""})`);
+        }
+      } else keeping.push(`Owner channel (${was}${ran.includes(part) ? ", new one not connected" : ""})`);
+    }
+  }
+  return { changing, keeping, warnings };
+}
 
 /** What a merchant needs before the wizard can connect each booking system (the owner channels: CHANNEL_GUIDES). */
 export const SETUP_GUIDES = {
@@ -157,7 +292,8 @@ asks what agents should do and which booking system you use, shows what that sys
 needs (with a link to its guide) and asks whether you are ready to connect; "Not yet"
 writes the files and connects nothing. Run again on existing files, it offers their saved
 answers as defaults and keeps everything it does not ask about; it first asks
-whether to keep the setup as it is, review and update it, or start over.
+whether to keep the setup as it is, change one part (business details, services and hours,
+booking system or owner channel; the rest stays as saved), review and update it, or start over.
 
 Options (env fallback in brackets, used with --non-interactive):
   --non-interactive        Take answers from flags/env; never prompt
@@ -402,8 +538,8 @@ export function envValue(v: string, key = "value"): string {
   throw new Error(`${key} cannot be written to .env: it contains ', " and \` together. Edit .env by hand.`);
 }
 
-/** Booking-system keys the wizard writes from its answers (plus PORT); on resume every other key is carried over. */
-const BACKEND_KEYS = [
+/** Booking-system keys the wizard writes from its answers; on resume every other key is carried over. */
+const BOOKING_KEYS = [
   "GOOGLE_SERVICE_ACCOUNT_JSON",
   "GOOGLE_SERVICE_ACCOUNT_FILE",
   "GOOGLE_CALENDAR_ID",
@@ -414,13 +550,10 @@ const BACKEND_KEYS = [
   "SQUARE_APP_ID",
   "SQUARE_APP_SECRET",
   "GLOSSGENIUS_BOOKING_URL",
-  "TWILIO_ACCOUNT_SID",
-  "TWILIO_AUTH_TOKEN",
-  "TWILIO_FROM",
-  "OWNER_PHONE",
-  ...SLACK_ENV_KEYS,
-  ...WHATSAPP_ENV_KEYS,
 ] as const;
+/** Owner-channel keys (OWNER_PHONE is shared by WhatsApp and Twilio). */
+const CHANNEL_KEYS = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM", "OWNER_PHONE", ...SLACK_ENV_KEYS, ...WHATSAPP_ENV_KEYS] as const;
+const BACKEND_KEYS = [...BOOKING_KEYS, ...CHANNEL_KEYS] as const;
 const WIZARD_KEYS: readonly string[] = [...BACKEND_KEYS, "PORT"];
 /**
  * Removed from the environment of a model CLI the website step runs (`npm run init` loads .env):
@@ -464,12 +597,19 @@ export type Backend = (
  * backend's keys (and GOOGLE_SERVICE_ACCOUNT_JSON). With no backend answered, a booking system
  * already in `carried` (the existing .env) is kept. Every other carried key follows as KEY=value;
  * the commented template lines appear only for keys not already set.
+ *
+ * "Change one part" passes "keep" for a part it did not change: `backend: "keep"` carries every saved
+ * booking key (complete or not), `channel: "keep"` every saved owner-channel key, both as saved.
+ * A `channel` answer replaces the saved channel ({} = none); without one the channel follows the backend.
  */
-export function buildEnvFile(backend: Backend | undefined, port: number, carried: Record<string, string> = {}): string {
+export function buildEnvFile(backend: Backend | "keep" | undefined, port: number, carried: Record<string, string> = {}, channel?: ChannelAnswers | "keep"): string {
   const lines = ["# Written by `npm run init`. `npm start` loads it (node --env-file-if-exists=.env).", "# Keep it private: it holds your booking system's credentials."];
   const kv = (k: string, v: string) => `${k}=${envValue(v, k)}`;
-  if (!backend && hasSavedBackend(carried)) {
-    for (const k of BACKEND_KEYS) if (carried[k] !== undefined) lines.push(kv(k, carried[k]));
+  const carry = (keys: readonly string[]) => { for (const k of keys) if (carried[k] !== undefined) lines.push(kv(k, carried[k])); };
+  const keptBooking = backend === "keep" || (!backend && hasSavedBackend(carried));
+  if (backend === "keep") backend = undefined;
+  if (keptBooking) {
+    carry(BOOKING_KEYS);
   } else if (backend?.kind === "google") {
     lines.push(kv("GOOGLE_SERVICE_ACCOUNT_FILE", backend.keyFile), kv("GOOGLE_CALENDAR_ID", backend.calendarId));
   } else if (backend?.kind === "glossgenius") {
@@ -499,7 +639,10 @@ export function buildEnvFile(backend: Backend | undefined, port: number, carried
       "# or run `npm run init -- --square` for Square Appointments.",
     );
   }
-  if (backend) lines.push(...channelEnvLines(backend, kv, backend.kind === "glossgenius"));
+  if (channel === "keep") carry(CHANNEL_KEYS);
+  else if (channel) lines.push(...channelEnvLines(channel, kv, backend ? backend.kind === "glossgenius" : !!carried.GLOSSGENIUS_BOOKING_URL));
+  else if (backend) lines.push(...channelEnvLines(backend, kv, backend.kind === "glossgenius"));
+  else if (keptBooking) carry(CHANNEL_KEYS);
   lines.push("", port === 3000 ? "# PORT=3000" : `PORT=${port}`);
   for (const [k, v] of Object.entries(carried)) if (!WIZARD_KEYS.includes(k)) lines.push(kv(k, v));
   if (carried.ALLOWED_HOSTS === undefined) {
@@ -844,6 +987,11 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
   let keptBackend = false;
   // The booking system picked interactively; when it is not connected yet the ending shows its guide.
   let planned: GuideKind | undefined;
+  // "Change one part": the part picked (undefined = the full walk), the parts that ran (it plus a part it
+  // needs) and the owner channel to write ("keep" = as saved).
+  let change: PartKey | undefined;
+  const ran: PartKey[] = [];
+  let channelOut: ChannelAnswers | "keep" = "keep";
 
   try {
     if (f["non-interactive"]) {
@@ -924,6 +1072,9 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         answers = result.answers;
         backend = result.backend;
         planned = result.planned;
+        change = result.change;
+        ran.push(...(result.ran ?? []));
+        channelOut = result.channel ?? "keep";
         if (result.keep) {
           log("Kept your setup; nothing was changed.");
           if (hasSavedBackend(savedEnv ?? {})) log(startSteps());
@@ -937,22 +1088,33 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           // An existing setup: keep, review or start over. Keep is the default once a booking system is connected.
           log(`Found ${found.join(" and ")}.\n`);
           const connected = hasSavedBackend(savedEnv ?? {});
-          const existing = await p.choose("Existing setup", EXISTING_ITEMS, connected ? EXISTING_KEEP : 1, EXISTING_DESCRIPTION);
-          if (existing === EXISTING_KEEP) {
+          const menu = existingItems(!!saved);
+          const existing = menu.actions[await p.choose("Existing setup", menu.items, menu.actions.indexOf(connected ? "keep" : "review"), menu.description)];
+          if (existing === "keep") {
             if (savedEnv?.PORT && !f.port && !env.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
             log("\nKept your setup; nothing was changed.");
             if (connected) log(startSteps());
             else log("No booking system is connected yet, so Mudroom will not start. Run `npm run init` again and pick \"Review and update\" to connect one.");
             return await finish(0);
           }
-          if (existing === EXISTING_RESET) saved = savedEnv = undefined;
+          if (existing === "reset") saved = savedEnv = undefined;
+          if (existing === "part") {
+            log("");
+            const parts = partItems(saved!, savedEnv ?? {});
+            change = parts.keys[await p.choose("What do you want to change?", parts.items, 0, parts.description)];
+            ran.push(change!);
+          }
           log("");
         }
         if (!f.port && !env.PORT && savedEnv?.PORT) port = parseIntIn(savedEnv.PORT, "PORT in .env", 1, 65535);
         // Optional first step of a first run (or "Start over"): what the merchant's website says. It only ever
         // supplies the lowest default of a question below; nothing from it is written without passing a prompt.
         let site: Awaited<ReturnType<typeof askWebsite>>;
-        if (saved || savedEnv) {
+        // The full walk runs every part; "Change one part" only the picked one and a part it needs.
+        const runs = (part: PartKey) => !change || ran.includes(part);
+        if (change) {
+          // Nothing to introduce: straight to the picked part's questions.
+        } else if (saved || savedEnv) {
           log("Mudroom setup. Press Enter to keep each saved answer.\n");
           if (f.website !== undefined) log('Note: --website is only used on a first run or after "Start over".\n');
         } else {
@@ -961,8 +1123,9 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           log("");
         }
         const channelKnown = !!((known("SLACK_BOT_TOKEN") && known("SLACK_APP_TOKEN") && known("SLACK_CHANNEL_ID")) || known("OWNER_PHONE"));
-        const goal = await p.choose("What do you want agents to do?", GOAL_ITEMS, f["slack-bot-token"] || f["whatsapp-token"] || f["owner-phone"] || channelKnown ? GOAL_MESSAGE : GOAL_BOOK, GOAL_DESCRIPTION);
-        log("");
+        const goalDefault = f["slack-bot-token"] || f["whatsapp-token"] || f["owner-phone"] || channelKnown ? GOAL_MESSAGE : GOAL_BOOK;
+        const goal = change ? goalDefault : await p.choose("What do you want agents to do?", GOAL_ITEMS, goalDefault, GOAL_DESCRIPTION);
+        if (!change) log("");
         const configured = (yes: boolean) => (yes ? "configured" : "not configured");
         // Same rule as hasSavedBackend: a key given inline (GOOGLE_SERVICE_ACCOUNT_JSON, the Docker/PaaS form) counts.
         const googleKnown = !!((known("GOOGLE_SERVICE_ACCOUNT_FILE") || known("GOOGLE_SERVICE_ACCOUNT_JSON")) && known("GOOGLE_CALENDAR_ID"));
@@ -976,7 +1139,8 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         else if (vendor && vendor.kind !== "square" && vendor.kind !== "glossgenius") {
           log(`Your site books through ${vendorLabel}, which Mudroom cannot connect to yet. Agents can still book into a Google Calendar and message you.\n`);
         }
-        const system = await p.choose(
+        // Not changing the booking system: the saved one, unasked (Google when none is saved).
+        const system = !runs("booking") ? savedSystem(savedEnv ?? {}) ?? 0 : await p.choose(
           "Booking system",
           [
             { emoji: "📅", label: "Google Calendar", status: configured(systemKnown[0]!) },
@@ -996,15 +1160,18 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         // A system not set up yet: show what it needs, then ask whether to connect now. "Not yet" writes
         // the files without a booking system; the guide is opened in the browser only when asked for.
         const guided = !systemKnown[system];
-        let notReady = !!(f["no-backend"] || f["skip-google"]);
+        // Not changing the booking system: nothing is connected now, and a services list may be empty only if none is saved.
+        let notReady = runs("booking") ? !!(f["no-backend"] || f["skip-google"]) : !hasSavedBackend(savedEnv ?? {});
         const guideIO = { env, log, openUrl: deps.openUrl };
-        if (guided && !notReady) {
+        if (guided && !notReady && runs("booking")) {
           notReady = !(await showGuide(p, SETUP_GUIDES[planned](callbackPort), guideIO));
           // "Finish later" does not end the wizard: say what the remaining questions are for.
           if (notReady) log("Nothing is connected for now. The next answers are saved, so `npm run init` starts from them next time.");
         }
-        log("");
-        const name = await askChecked(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
+        // Connecting Google with no saved services: they are needed to book, so that part runs too (it sits before the credentials).
+        if (change === "booking" && system === 0 && !notReady && !saved?.services.length) ran.push("services");
+        if (runs("booking")) log("");
+        const name = !runs("business") ? saved!.name : await askChecked(p, "Business or your name", f.name ?? saved?.name ?? site?.name, nonEmpty("Name"));
         const siteZone = (f.timezone ?? saved?.timezone) === undefined ? site?.timezone : undefined;
         if (siteZone && siteZone !== localZone) log(`Your site points to the time zone ${cleanLine(siteZone, 64)}; this machine is set to ${localZone}.`);
         // After a site was read, a default that is only this machine's zone is labelled as such: it follows the site's summary and could be taken for the site's.
@@ -1012,14 +1179,15 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         const zoneSuggestion = zoneKnown && isTimeZone(zoneKnown) ? zoneKnown : localZone;
         if (zoneKnown && zoneSuggestion !== zoneKnown) log(`"${zoneKnown}" is not an IANA time zone (e.g. America/New_York). Choose another.`);
         const zoneSource: TimeZoneSource = zoneSuggestion !== zoneKnown ? "device" : f.timezone ? "provided" : saved?.timezone ? "saved" : siteZone ? "website" : "device";
-        const timezone = p.timeZone ? validZone(await p.timeZone(zoneSuggestion, zoneSource)) :
+        const timezone = !runs("business") ? saved!.timezone : p.timeZone ? validZone(await p.timeZone(zoneSuggestion, zoneSource)) :
           await askChecked(p, "Time zone", zoneSuggestion, validZone, zoneKnown === undefined && site ? `${localZone}, this machine's` : undefined);
-        const currency = await askChecked(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
+        // Prices carry no currency of their own, so "Change one part" never changes it (Review and update does).
+        const currency = change ? saved!.currency : await askChecked(p, "Currency", f.currency ?? saved?.currency ?? site?.currency ?? "USD", validCurrency);
         // Square and GlossGenius set services, prices and hours themselves. Not ready, they are asked on the next
         // run, unless the website step found services or hours: those are asked about now, or the reading is lost.
         const store = useSquare || useGlossGenius;
         const siteCatalog = !!site && (site.bookable.length > 0 || site.ask.length > 0 || site.hours !== undefined);
-        const platform = store || (notReady && !siteCatalog);
+        const platform = store || (!change && notReady && !siteCatalog);
         // Buffer and price are explained once, at the first service that is asked about: not above a prompt left empty.
         let explained = false;
         const askService = async (sname: string, prev?: ServiceAnswer): Promise<ServiceAnswer> => {
@@ -1058,7 +1226,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
             }
           }
         };
-        if (platform) {
+        if (platform || !runs("services")) {
           services.push(...savedServices); // Not asked here; a resume leaves them as they were.
           if (store && site && (site.bookable.length || site.ask.length)) {
             log(`${useSquare ? "Square" : "GlossGenius"} supplies your services, so the ones found on your site were not added.`);
@@ -1078,7 +1246,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
             services.push(await askService(sname, prev));
           }
         }
-        while (!platform) {
+        while (!platform && runs("services")) {
           const sname = await p.ask(`  Service ${services.length + 1} name`);
           if (!sname) {
             if (services.length || notReady) break; // nothing connected yet: the list can be filled in on the next run
@@ -1088,9 +1256,9 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           services.push(await askService(sname));
         }
         if (prefilled.length) await offerAskServices(true);
-        const hoursKept = f.hours ?? (saved ? renderHours(saved.hours) : undefined);
+        const hoursKept = (runs("services") ? f.hours : undefined) ?? (saved ? renderHours(saved.hours) : undefined);
         let hours = hoursKept ?? DEFAULT_HOURS;
-        if (!platform) {
+        if (!platform && runs("services")) {
           log('\nOpening hours, e.g. "mon-fri 09:00-17:00; sat 10:00-14:00". Unlisted days are closed.');
           // The site's hours are a default for this prompt only: where hours are not asked they are never written.
           hours = await askChecked(p, "Hours", hoursKept ?? site?.hours ?? DEFAULT_HOURS, (s) => {
@@ -1099,7 +1267,7 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
           });
         }
         answers = { name, timezone, currency, services, hours, ask_services: askServices };
-        if (notReady) {
+        if (notReady || !runs("booking")) {
           // Nothing to connect: a booking system already in .env is kept (buildEnvFile).
         } else if (useSquare) {
           if (!guided) {
@@ -1140,7 +1308,13 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         }
         // Owner channel (none, Slack, WhatsApp or Twilio), for any booking system: src/cli/init-channel.ts.
         // Asked for the "message me" goal, and always for GlossGenius, whose bookings are otherwise only logged.
-        if (backend && (goal === GOAL_MESSAGE || backend.kind === "glossgenius")) {
+        if (change) {
+          // Connecting GlossGenius: its bookings are otherwise only logged, so the owner channel is asked too.
+          if (change === "booking" && backend?.kind === "glossgenius") ran.push("channel");
+          if (runs("channel")) {
+            channelOut = (await askOwnerChannel(p, { known, flags: f, log, glossgenius: system === 2, askValid: askChecked, preferSlack: true, guide: guideIO })) ?? "keep";
+          }
+        } else if (backend && (goal === GOAL_MESSAGE || backend.kind === "glossgenius")) {
           Object.assign(backend, await askOwnerChannel(p, { known, flags: f, log, glossgenius: backend.kind === "glossgenius", askValid: askChecked, preferSlack: goal === GOAL_MESSAGE, guide: guideIO }));
         } else if (backend) {
           // Not asked: a channel already in .env stays as it is.
@@ -1163,11 +1337,29 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
     }
     const carried = savedEnv ?? {};
     const configText = `${JSON.stringify(config, null, 2)}\n`;
-    const envText = buildEnvFile(backend, port, carried);
-    writeFileSync(configPath, configText);
-    writeFileSync(envPath, envText, { mode: 0o600 });
-    chmodSync(envPath, 0o600); // mode only applies to new files
-    log(`\nWrote ${configPath}\nWrote ${envPath} (mode 600)`);
+    // "Change one part" writes only the file its parts own: config.json for business details and services,
+    // .env for the booking system and owner channel, where every part it did not change is kept as saved.
+    const writeConfig = !change || ran.includes("business") || ran.includes("services");
+    const writeEnv = !change || ran.includes("booking") || ran.includes("channel");
+    const envText = change ? buildEnvFile(ran.includes("booking") ? backend ?? "keep" : "keep", port, carried, channelOut) : buildEnvFile(backend, port, carried);
+    if (change && p && !webSession) {
+      const summary = changeSummary({ ran, saved: saved!, savedEnv: carried, answers, backend, channel: channelOut });
+      log("");
+      if (summary.changing.length) log(`Changing: ${summary.changing.join("; ")}`);
+      log(`Keeping:  ${summary.keeping.join("; ") || "nothing else"}`);
+      summary.warnings.forEach((w) => log(`Note: ${w}`));
+      log("");
+      if ((await p.choose("Save this setup?", SAVE_ITEMS, 0)) === 1) {
+        log("Nothing changed. Run `npm run init` again to try again.");
+        return await finish(0);
+      }
+    }
+    if (writeConfig) writeFileSync(configPath, configText);
+    if (writeEnv) {
+      writeFileSync(envPath, envText, { mode: 0o600 });
+      chmodSync(envPath, 0o600); // mode only applies to new files
+    }
+    log(`\n${[writeConfig ? `Wrote ${configPath}` : "", writeEnv ? `Wrote ${envPath} (mode 600)` : ""].filter(Boolean).join("\n")}`);
     if (saved) {
       const ids = new Set(config.services.map((s) => s.id));
       const oldIds = new Set(saved.services.map((s) => s.id));
@@ -1176,19 +1368,23 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
       }
     }
     keptBackend = !backend && hasSavedBackend(carried);
-    if (backend?.slack) {
-      log(`Slack owner channel on: agent messages and booking notices go to channel ${backend.slack.channelId}.`);
-      if (backend.whatsapp) log("WhatsApp is set too; Mudroom uses Slack and ignores the WHATSAPP_* vars.");
-      if (backend.owner) log("Twilio is set too; Mudroom uses Slack and ignores the TWILIO_* vars.");
-      await checkSlack(backend.slack, makeSlack, log);
-    } else if (backend?.whatsapp) {
-      log(`WhatsApp owner channel on: agent messages and booking notices go to ${maskPhone(backend.whatsapp.phone)}.`);
-      if (backend.owner) log("Twilio is set too; Mudroom uses WhatsApp and ignores the TWILIO_* vars.");
-      await checkWhatsapp(backend.whatsapp, makeWhatsapp, log);
+    // The channel to report on and check: the full walk's rides on the backend; "Change one part" checks one it changed.
+    const ch: ChannelAnswers | undefined = change ? (channelOut === "keep" ? undefined : channelOut) : backend;
+    if (ch?.slack) {
+      log(`Slack owner channel on: agent messages and booking notices go to channel ${ch.slack.channelId}.`);
+      if (ch.whatsapp) log("WhatsApp is set too; Mudroom uses Slack and ignores the WHATSAPP_* vars.");
+      if (ch.owner) log("Twilio is set too; Mudroom uses Slack and ignores the TWILIO_* vars.");
+      await checkSlack(ch.slack, makeSlack, log);
+    } else if (ch?.whatsapp) {
+      log(`WhatsApp owner channel on: agent messages and booking notices go to ${maskPhone(ch.whatsapp.phone)}.`);
+      if (ch.owner) log("Twilio is set too; Mudroom uses WhatsApp and ignores the TWILIO_* vars.");
+      await checkWhatsapp(ch.whatsapp, makeWhatsapp, log);
       log("");
-      whatsappWebhookLines(backend.whatsapp, env.PUBLIC_URL ?? savedEnv?.PUBLIC_URL).forEach((l) => log(l));
-    } else if (backend?.owner) {
-      log(`Owner SMS on: agent bookings, cancels and reschedules are texted to ${maskPhone(backend.owner.phone)} from ${backend.owner.from}.`);
+      whatsappWebhookLines(ch.whatsapp, env.PUBLIC_URL ?? savedEnv?.PUBLIC_URL).forEach((l) => log(l));
+    } else if (ch?.owner) {
+      log(`Owner SMS on: agent bookings, cancels and reschedules are texted to ${maskPhone(ch.owner.phone)} from ${ch.owner.from}.`);
+    } else if (change === "channel" && channelOut !== "keep") {
+      log("No owner channel: agent messages and booking notices are only logged.");
     }
 
     if (keptBackend) {
@@ -1228,7 +1424,8 @@ export async function runInit(argv: string[], deps: InitDeps = {}): Promise<numb
         }
         log("Then re-run `npm run init` (or just `npm start`, which checks again).");
       }
-      if (!backend.owner && !backend.slack && !backend.whatsapp) log("No owner channel configured: agent bookings are logged, not sent to you (docs/connectors/slack.md, docs/connectors/whatsapp.md, docs/connectors/twilio.md).");
+      const gg: ChannelAnswers = change ? (channelOut === "keep" ? savedChannel(carried) : channelOut) : backend;
+      if (!gg.owner && !gg.slack && !gg.whatsapp) log("No owner channel configured: agent bookings are logged, not sent to you (docs/connectors/slack.md, docs/connectors/whatsapp.md, docs/connectors/twilio.md).");
     } else {
       const google = backend;
       const json = readFileSync(google.keyFile, "utf8");
