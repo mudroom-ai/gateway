@@ -350,7 +350,7 @@ type FakeRow = { thread_id: string; number_id: string; owner: string; reused: bo
 class FakePoolStore implements WhatsappPoolStore {
   rows = new Map<string, FakeRow>();
   windows = new Map<string, number>();
-  pending = new Map<string, WaPending & { consumed: boolean }>();
+  pending = new Map<string, WaPending & { consumed: boolean; chosen?: string }>();
   failOn: string | undefined;
 
   private check(name: string): void {
@@ -414,11 +414,12 @@ class FakePoolStore implements WhatsappPoolStore {
   waTakePending(q: { prompt_wamid: string; chosen_ref: string; number_id: string; now_ms: number }): WaTakeResult {
     const p = this.pending.get(q.prompt_wamid);
     if (!p) return { ok: false, reason: "unknown" };
-    if (p.consumed) return { ok: false, reason: "consumed" };
-    if (q.now_ms >= p.expires_at_ms) return { ok: false, reason: "expired" };
+    const { consumed: _c, chosen: _ch, ...pending } = p;
+    if (p.consumed) return p.chosen === q.chosen_ref && p.number_id === q.number_id ? { ok: true, pending } : { ok: false, reason: "consumed" };
     if (p.number_id !== q.number_id || !p.allowed.includes(q.chosen_ref)) return { ok: false, reason: "not_allowed" };
+    if (q.now_ms >= p.expires_at_ms) return { ok: false, reason: "expired" };
     p.consumed = true;
-    const { consumed: _c, ...pending } = p;
+    p.chosen = q.chosen_ref;
     return { ok: true, pending };
   }
   waOrphanNumbers(pool: string[], owner_phone: string): string[] {
@@ -638,13 +639,18 @@ describe("whatsappOwnerChannel: number pool, Which customer?", () => {
     expect(posts()).toHaveLength(4);
   });
 
-  it("a tap replays the original text with the chosen thread and confirms it; a redelivered tap is ignored", async () => {
-    const { ch, core, store, r3, posts } = await asked();
+  it("a tap replays the original text with the chosen thread and confirms it; a redelivered tap replays the same message id", async () => {
+    const { ch, core, store, r1, r3, posts } = await asked();
     await ch.webhook.handle(delivery([tap("wamid.tap1", "wamid.o4", r3, { at: T0 + 70_000 })], { pnid: P1 }));
     expect(core.at(-1)).toEqual({ provider_ref: r3, provider_msg_id: "wamid.in1", user_id: OWNER_WA, text: "Yes, 3pm works", sent_at_ms: T0 + 60_000 });
     expect(store.rows.get("t3")!.confirmed_at_ms).toBe(T0 + 70_000);
+    // Meta redelivers the tap: the core gets the same original id again and dedups it.
     await ch.webhook.handle(delivery([tap("wamid.tap1", "wamid.o4", r3)], { pnid: P1 }));
-    expect(core).toHaveLength(2);
+    expect(core).toHaveLength(3);
+    expect(core.at(-1)!.provider_msg_id).toBe("wamid.in1");
+    // A second, different choice on an answered question is ignored.
+    await ch.webhook.handle(delivery([tap("wamid.tap2", "wamid.o4", r1)], { pnid: P1 }));
+    expect(core).toHaveLength(3);
     expect(posts()).toHaveLength(4); // no notice, nothing sent
   });
 

@@ -231,8 +231,6 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
   const strangers = new Map<string, number>();
   /** The number each owner message being handled right now came in on (askWhichThread answers from it); emptied when its delivery ends. */
   const inflight = new Map<string, { number_id: string; n: number }>();
-  /** Taps whose question was consumed but whose reply the core failed to store: Meta redelivers the tap, and this replays it. */
-  const retryTaps = new Map<string, { chosen: string; number_id: string; pending: WaPending }>();
   /** Numbers already warned about (an open thread on a number no longer in the pool). */
   const warnedNumbers = new Set<string>();
   let orphansChecked = false;
@@ -396,35 +394,21 @@ export function whatsappOwnerChannel(opts: WhatsappOwnerOptions): WhatsappChanne
     const prompt = typeof m.context?.id === "string" ? m.context.id : "";
     if (!chosen || !prompt) return noticeOnce(id, TAP_AGAIN_NOTICE, at);
     const tapMs = metaMs(m.timestamp) ?? now();
-    const retry = retryTaps.get(prompt);
-    let pending: WaPending;
-    if (retry && retry.chosen === chosen && retry.number_id === at) {
-      pending = retry.pending;
-    } else {
-      const r = store!.waTakePending({ prompt_wamid: prompt, chosen_ref: chosen, number_id: at, now_ms: now() });
-      if (!r.ok) {
-        // A redelivered tap was handled already; anything else cannot be honoured, and guessing is not an option.
-        if (r.reason !== "consumed") await noticeOnce(id, TAP_AGAIN_NOTICE, at);
-        return;
-      }
-      pending = r.pending;
+    // A redelivered tap gets the same pending back (the core dedups on the original's id), so a reply the core failed to
+    // store is replayed; another choice after the first is ignored, and anything else cannot be honoured: never guess.
+    const r = store!.waTakePending({ prompt_wamid: prompt, chosen_ref: chosen, number_id: at, now_ms: now() });
+    if (!r.ok) {
+      if (r.reason !== "consumed") await noticeOnce(id, TAP_AGAIN_NOTICE, at);
+      return;
     }
-    let outcome: Outcome;
-    try {
-      outcome = await handler!({
-        provider_ref: chosen,
-        provider_msg_id: pending.orig_wamid,
-        user_id: from,
-        text: pending.text,
-        ...(pending.sent_at_ms !== null ? { sent_at_ms: pending.sent_at_ms } : {}),
-      });
-    } catch (e) {
-      // The question is consumed but the reply is not stored: keep it for Meta's redelivery of this tap.
-      retryTaps.set(prompt, { chosen, number_id: at, pending });
-      if (retryTaps.size > NOTICED_MAX) retryTaps.delete(retryTaps.keys().next().value!);
-      throw e;
-    }
-    retryTaps.delete(prompt);
+    const pending = r.pending;
+    const outcome = await handler!({
+      provider_ref: chosen,
+      provider_msg_id: pending.orig_wamid,
+      user_id: from,
+      text: pending.text,
+      ...(pending.sent_at_ms !== null ? { sent_at_ms: pending.sent_at_ms } : {}),
+    });
     if (outcome === "accepted" && pooled) confirmOn(at, chosen, tapMs);
     if (outcome.startsWith("rejected:")) await noticeOnce(id, rejectionNotice(outcome.slice("rejected:".length)), at);
   }

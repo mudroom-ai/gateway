@@ -94,6 +94,19 @@ describe("store: WhatsApp number pool", () => {
     expect(open(s, "t4", 5000 + RELEASE_HOLD_MS)).toEqual({ number_id: A, reused: true });
   });
 
+  it("remembers a number that carried a conversation after its threads are purged; a refused opener leaves no history", () => {
+    const s = new Store(":memory:");
+    expect(open(s, "t1", 0)).toEqual({ number_id: A, reused: false });
+    s.waMarkAccepted("t1", "wamid.1", 10);
+    close(s, "t1", 1000);
+    s.purgeClosedThreads(2000); // the thread and its wa_threads row are gone, the chat's messages are not
+    expect(open(s, "t2", 5000 + RELEASE_HOLD_MS)).toEqual({ number_id: B, reused: false });
+    s.deleteThread("t2"); // never accepted: the send was refused
+    expect(open(s, "t3", 6000 + RELEASE_HOLD_MS)).toEqual({ number_id: B, reused: false });
+    s.waMarkAccepted("t3", "wamid.3", 6000 + RELEASE_HOLD_MS);
+    expect(open(s, "t4", 7000 + RELEASE_HOLD_MS)).toEqual({ number_id: A, reused: true });
+  });
+
   it("records acceptance, the first read and the first confirmation", () => {
     const s = new Store(":memory:");
     open(s, "t1", 0);
@@ -124,7 +137,8 @@ describe("store: WhatsApp number pool", () => {
     expect(take({ chosen_ref: "wamid.9" })).toEqual({ ok: false, reason: "not_allowed" });
     expect(take({ now_ms: 1000 })).toEqual({ ok: false, reason: "expired" });
     expect(take({})).toEqual({ ok: true, pending: p });
-    expect(take({})).toEqual({ ok: false, reason: "consumed" });
+    expect(take({})).toEqual({ ok: true, pending: p }); // the same tap redelivered: replayed, the core dedups
+    expect(take({ chosen_ref: "wamid.1" })).toEqual({ ok: false, reason: "consumed" });
     expect(take({ prompt_wamid: "wamid.p2" })).toEqual({ ok: false, reason: "unknown" });
   });
 });

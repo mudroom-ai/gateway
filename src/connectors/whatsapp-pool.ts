@@ -78,7 +78,7 @@ export interface WaPending {
 
 export type WaTakeResult =
   | { ok: true; pending: WaPending }
-  /** unknown: no such prompt (or purged). consumed: already answered (a redelivered tap; ignore silently). expired, not_allowed: refuse with a notice. */
+  /** unknown: no such prompt (or purged). consumed: already answered with another choice (ignore silently). expired, not_allowed: refuse with a notice. */
   | { ok: false; reason: "unknown" | "consumed" | "expired" | "not_allowed" };
 
 /** Implemented by Store (src/store/sqlite.ts); synchronous like the rest of the store. */
@@ -106,7 +106,11 @@ export interface WhatsappPoolStore {
   waPutPending(p: WaPending): void;
   /** True when this original message already has a prompt (a redelivered webhook: do not ask twice). */
   waHasPending(orig_wamid: string): boolean;
-  /** Consume the prompt for a tap: checks number, allowed choice and expiry; marks it consumed on success. */
+  /**
+   * Consume the prompt for a tap: checks number, allowed choice and expiry; marks it consumed with the choice on success.
+   * The same tap again (same choice and number) returns the pending again, so a tap whose reply the core failed to store
+   * is replayed on Meta's redelivery (the core dedups on orig_wamid); another choice after that is "consumed".
+   */
   waTakePending(q: { prompt_wamid: string; chosen_ref: string; number_id: string; now_ms: number }): WaTakeResult;
   /** Numbers with open threads that are not in the pool (removed from the env); the channel warns at startup. */
   waOrphanNumbers(pool: string[], owner_phone: string): string[];

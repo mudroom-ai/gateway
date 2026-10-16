@@ -197,6 +197,15 @@ CREATE TABLE IF NOT EXISTS wa_windows (
   PRIMARY KEY (number_id, owner_phone)
 );
 
+-- Pool numbers that ever carried a conversation to this owner. Never purged with the threads: a chat keeps its old
+-- messages, so a number stays "reused" (plain replies need a read receipt, quote or pick) however long it sat idle.
+CREATE TABLE IF NOT EXISTS wa_number_history (
+  number_id     TEXT NOT NULL,
+  owner_phone   TEXT NOT NULL,
+  first_used_ms INTEGER NOT NULL,
+  PRIMARY KEY (number_id, owner_phone)
+);
+
 -- Owner replies waiting for a "Which customer?" tap; allowed is a JSON array of provider_refs.
 CREATE TABLE IF NOT EXISTS wa_pending (
   prompt_wamid  TEXT PRIMARY KEY,
@@ -206,7 +215,8 @@ CREATE TABLE IF NOT EXISTS wa_pending (
   number_id     TEXT NOT NULL,
   allowed       TEXT NOT NULL,
   expires_at_ms INTEGER NOT NULL,
-  consumed      INTEGER NOT NULL DEFAULT 0
+  consumed      INTEGER NOT NULL DEFAULT 0,
+  chosen_ref    TEXT
 );
 `;
 
@@ -825,11 +835,12 @@ export class Store implements WhatsappPoolStore {
         )
         .get(q.thread_id) as unknown as NumberUse;
       const windowAt = this.db.prepare("SELECT last_inbound_ms FROM wa_windows WHERE number_id = ? AND owner_phone = ?");
+      const everUsed = this.db.prepare("SELECT 1 FROM wa_number_history WHERE number_id = ? AND owner_phone = ?");
 
       const stats = q.pool.map((number_id, i) => {
         const u = onNumber.get(number_id, q.owner_phone) as unknown as NumberUse;
         const pre: NumberUse = i === 0 ? prePool : { used: 0, open: 0, released: null, busy: 0 };
-        const used = Number(u.used) + Number(pre.used) > 0;
+        const used = Number(u.used) + Number(pre.used) > 0 || everUsed.get(number_id, q.owner_phone) !== undefined;
         const open = Number(u.open) + Number(pre.open);
         const rel = [u.released, pre.released].filter((v) => v !== null).map(Number);
         const released = rel.length ? Math.max(...rel) : null;
@@ -845,6 +856,8 @@ export class Store implements WhatsappPoolStore {
       // No free number: overflow onto the busiest chat (ties to pool order, so the primary first).
       const pick = free[0] ?? [...stats].sort((a, b) => b.open - a.open || a.i - b.i)[0];
       if (!pick) throw new Error("waAssign: empty pool");
+      // Pre-pool threads on the primary are history its chat shows too; remember it before they are purged.
+      if (Number(prePool.used) > 0) this.recordUse(q.pool[0]!, q.owner_phone, q.now_ms);
       this.db
         .prepare("INSERT INTO wa_threads (thread_id, number_id, owner_phone, reused, assigned_at_ms) VALUES (?, ?, ?, ?, ?)")
         .run(q.thread_id, pick.number_id, q.owner_phone, pick.used ? 1 : 0, q.now_ms);
@@ -899,7 +912,16 @@ export class Store implements WhatsappPoolStore {
   }
 
   waMarkAccepted(threadId: string, openerWamid: string, atMs: number): void {
-    this.db.prepare("UPDATE wa_threads SET accepted_at_ms = ?, opener_wamid = ? WHERE thread_id = ?").run(atMs, openerWamid, threadId);
+    this.tx(() => {
+      this.db.prepare("UPDATE wa_threads SET accepted_at_ms = ?, opener_wamid = ? WHERE thread_id = ?").run(atMs, openerWamid, threadId);
+      // Only an opener Meta accepted puts messages in the chat; an assignment whose send was refused leaves no history.
+      const w = this.db.prepare("SELECT number_id, owner_phone FROM wa_threads WHERE thread_id = ?").get(threadId) as Raw | undefined;
+      if (w) this.recordUse(w.number_id as string, w.owner_phone as string, atMs);
+    });
+  }
+
+  private recordUse(numberId: string, ownerPhone: string, atMs: number): void {
+    this.db.prepare("INSERT OR IGNORE INTO wa_number_history (number_id, owner_phone, first_used_ms) VALUES (?, ?, ?)").run(numberId, ownerPhone, atMs);
   }
 
   waMarkRead(openerWamid: string, atMs: number): void {
@@ -938,7 +960,6 @@ export class Store implements WhatsappPoolStore {
     return this.tx(() => {
       const r = this.db.prepare("SELECT * FROM wa_pending WHERE prompt_wamid = ?").get(q.prompt_wamid) as Raw | undefined;
       if (!r) return { ok: false, reason: "unknown" };
-      if (Number(r.consumed) === 1) return { ok: false, reason: "consumed" };
       const pending: WaPending = {
         prompt_wamid: r.prompt_wamid as string,
         orig_wamid: r.orig_wamid as string,
@@ -948,9 +969,13 @@ export class Store implements WhatsappPoolStore {
         allowed: JSON.parse(r.allowed as string) as string[],
         expires_at_ms: Number(r.expires_at_ms),
       };
+      if (Number(r.consumed) === 1) {
+        // The same tap again (Meta redelivers when the reply was not stored): hand the original back; the core dedups on orig_wamid.
+        return r.chosen_ref === q.chosen_ref && pending.number_id === q.number_id ? { ok: true, pending } : { ok: false, reason: "consumed" };
+      }
       if (pending.number_id !== q.number_id || !pending.allowed.includes(q.chosen_ref)) return { ok: false, reason: "not_allowed" };
       if (q.now_ms >= pending.expires_at_ms) return { ok: false, reason: "expired" };
-      this.db.prepare("UPDATE wa_pending SET consumed = 1 WHERE prompt_wamid = ?").run(q.prompt_wamid);
+      this.db.prepare("UPDATE wa_pending SET consumed = 1, chosen_ref = ? WHERE prompt_wamid = ?").run(q.chosen_ref, q.prompt_wamid);
       return { ok: true, pending };
     });
   }
