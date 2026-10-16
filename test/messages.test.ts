@@ -5,9 +5,9 @@
 //   untested first version; seam=CommunicationConnector thread members (fake here, Slack in test/slack.test.ts)
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
-import { ConnectorError, type ChannelContext, type CommunicationConnector, type OwnerMessageHandler, type PostedQuery, type ThreadOpener } from "../src/connectors/types.js";
+import { ConnectorError, type ChannelContext, type CommunicationConnector, type OwnerInboundMessage, type OwnerMessageHandler, type PostedQuery, type ThreadChoice, type ThreadOpener } from "../src/connectors/types.js";
 import { runOp } from "../src/adapters/http.js";
-import { CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, SEVERAL_WAITING_HINT_FLAT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
+import { CHOICE_DETAIL_CHARS, CLOSE_NOTICE, createMessageOps, MAX_AGENT_MESSAGES, MIRROR_PREFIX, SEVERAL_WAITING_HINT, SEVERAL_WAITING_HINT_FLAT, transition, TRANSITIONS, type MessageOps, type Timers } from "../src/messages.js";
 import { logOwnerChannel } from "../src/notify/owner.js";
 import { Store } from "../src/store/sqlite.js";
 import type { Booking, Service } from "../src/types.js";
@@ -69,6 +69,16 @@ class FakeChannel implements CommunicationConnector {
   }
   status() {
     return { connected: true };
+  }
+}
+
+/** A channel that asks "which customer?" (WhatsApp buttons) instead of the hint. */
+class AskingChannel extends FakeChannel {
+  asks: { m: OwnerInboundMessage; choices: ThreadChoice[] }[] = [];
+  askFail: unknown = undefined;
+  async askWhichThread(m: OwnerInboundMessage, choices: ThreadChoice[]) {
+    if (this.askFail) throw this.askFail;
+    this.asks.push({ m, choices });
   }
 }
 
@@ -1035,5 +1045,94 @@ describe("runOp", () => {
     );
     expect(codeOf(r)).toBe("internal");
     expect(lines[0]).toMatch(/op leave_message threw: .*SQLITE_BUSY/);
+  });
+});
+
+describe("which customer? (askWhichThread)", () => {
+  const BO = { name: "Bo", email: "bo@example.com" };
+  const top = (id: string, over: Partial<OwnerInboundMessage> = {}): OwnerInboundMessage => ({ provider_msg_id: id, user_id: "12025550199", text: "Yes, 3pm", ...over });
+
+  it("several waiting: asks for every message with one choice per thread, no hint, nothing stored", async () => {
+    const channel = new AskingChannel();
+    const { ops, store, advance } = setup({ channel });
+    const a = await leaveOk(ops);
+    advance(1000); // choices are oldest first
+    const b = await leaveOk(ops, { customer: BO, message: "Can I bring\ntwo dogs?" });
+    expect(await ops.onOwnerMessage(top("w1"))).toBe("ignored");
+    expect(await ops.onOwnerMessage(top("w2"))).toBe("ignored");
+    expect(channel.asks.map((x) => x.m.provider_msg_id)).toEqual(["w1", "w2"]);
+    expect(channel.asks[0]!.choices).toEqual([
+      { provider_ref: "ts.1", thread_id: a.thread_id, title: "Ann Lee", detail: "Do you groom cats?" },
+      { provider_ref: "ts.2", thread_id: b.thread_id, title: "Bo", detail: "Can I bring two dogs?" },
+    ]);
+    await flush();
+    expect(channel.notices).toEqual([]);
+    expect(store.hasProviderMessage("w1")).toBe(false);
+    // Nothing is asked about a message fetched after a gap.
+    expect(await ops.onOwnerMessage(top("w3", { backfilled: true, sent_at_ms: Date.parse("2026-10-08T17:00:00Z") }))).toBe("ignored");
+    expect(channel.asks).toHaveLength(2);
+  });
+
+  it("scope_refs: never auto-matches, offers only open threads in scope, ignores when none is open", async () => {
+    const channel = new AskingChannel();
+    const { ops, store } = setup({ channel });
+    const a = await leaveOk(ops);
+    const b = await leaveOk(ops, { customer: BO });
+    await ops.onOwnerMessage({ provider_ref: "ts.2", provider_msg_id: "r1", user_id: "U1", text: "Sure" }); // Bo answered: still open
+    // One open thread in scope: asked, not matched; Ann (waiting, out of scope) is never offered.
+    expect(await ops.onOwnerMessage(top("s1", { scope_refs: ["ts.2", "ts.9"] }))).toBe("ignored");
+    expect(channel.asks.map((x) => x.choices.map((c) => c.thread_id))).toEqual([[b.thread_id]]);
+    expect(store.getThread(b.thread_id)!.state).toBe("answered");
+    expect(store.getThread(a.thread_id)!.state).toBe("awaiting_owner");
+    // Bo closed: nothing open in scope, so nothing is sent even though Ann waits.
+    await ops.closeThread({ thread_id: b.thread_id, read_token: b.read_token });
+    expect(await ops.onOwnerMessage(top("s2", { scope_refs: ["ts.2"] }))).toBe("ignored");
+    expect(await ops.onOwnerMessage(top("s3", { scope_refs: [] }))).toBe("ignored");
+    await flush();
+    expect(channel.asks).toHaveLength(1);
+    expect(channel.notices).toEqual([]);
+    expect(store.getThread(a.thread_id)!.state).toBe("awaiting_owner");
+  });
+
+  it("names that collide get a distinguishing suffix; detail is the latest agent message on one line, at most 72 code points", async () => {
+    const channel = new AskingChannel();
+    const { ops, advance } = setup({ channel });
+    const a = await leaveOk(ops);
+    advance(1000);
+    await leaveOk(ops, { customer: { name: "ann lee", phone: "+1 202 555 0123" } });
+    advance(1000);
+    await leaveOk(ops, { customer: BO });
+    const long = `Line one\n\n  line two ${"🐶".repeat(80)}`;
+    expect(codeOf(await ops.agentFollowUp({ thread_id: a.thread_id, read_token: a.read_token, message: long }))).toBe("ok");
+    await ops.onOwnerMessage(top("d1"));
+    const choices = channel.asks[0]!.choices;
+    expect(choices.map((c) => c.title)).toEqual(["Ann Lee (0199)", "ann lee (0123)", "Bo"]);
+    const detail = choices[0]!.detail!;
+    expect(detail.startsWith("Line one line two 🐶")).toBe(true);
+    expect(detail).not.toMatch(/\n/);
+    expect([...detail]).toHaveLength(CHOICE_DETAIL_CHARS);
+    expect(detail.endsWith("🐶…")).toBe(true);
+  });
+
+  it("a failing ask propagates so the provider redelivers; the redelivery asks again", async () => {
+    const channel = new AskingChannel();
+    const { ops } = setup({ channel });
+    await leaveOk(ops);
+    await leaveOk(ops, { customer: BO });
+    channel.askFail = unavailable();
+    await expect(ops.onOwnerMessage(top("f1"))).rejects.toThrow("slack 503");
+    await expect(ops.onOwnerMessage(top("f2", { scope_refs: ["ts.1"] }))).rejects.toThrow("slack 503");
+    channel.askFail = undefined;
+    expect(await ops.onOwnerMessage(top("f1"))).toBe("ignored");
+    expect(channel.asks).toHaveLength(1);
+  });
+
+  it("a channel without askWhichThread gets the old hint, also for scope_refs", async () => {
+    const { ops, channel } = setup();
+    await leaveOk(ops);
+    expect(await ops.onOwnerMessage(top("h1", { scope_refs: ["ts.1"] }))).toBe("ignored");
+    await flush();
+    expect(channel.notices).toEqual([SEVERAL_WAITING_HINT]);
+    expect(channel.acks).toEqual([]);
   });
 });
