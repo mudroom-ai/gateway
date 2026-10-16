@@ -5,7 +5,15 @@
 // that were returned to the caller.
 
 import { DatabaseSync } from "node:sqlite";
-import type { WaAssignment, WaOpenThread, WaPending, WaTakeResult, WhatsappPoolStore } from "../connectors/whatsapp-pool.js";
+import {
+  PENDING_TTL_MS,
+  RELEASE_HOLD_MS,
+  type WaAssignment,
+  type WaOpenThread,
+  type WaPending,
+  type WaTakeResult,
+  type WhatsappPoolStore,
+} from "../connectors/whatsapp-pool.js";
 import type { AppliedRule, Booking, BookingState, Cents, Customer, QuoteState, Slot } from "../types.js";
 
 export interface QuoteRow {
@@ -163,7 +171,58 @@ CREATE TABLE IF NOT EXISTS message_requests (
   created_at   TEXT NOT NULL,
   PRIMARY KEY (merchant_id, idem_key)
 );
+
+-- WhatsApp number pool (src/connectors/whatsapp-pool.ts). One row per thread the
+-- channel opened, naming the number it was sent from; "ever used" and "released"
+-- are derived from these rows and their threads, so they go when the thread is purged.
+CREATE TABLE IF NOT EXISTS wa_threads (
+  thread_id         TEXT PRIMARY KEY REFERENCES threads (thread_id) ON DELETE CASCADE,
+  number_id         TEXT NOT NULL,
+  owner_phone       TEXT NOT NULL,
+  reused            INTEGER NOT NULL,
+  assigned_at_ms    INTEGER NOT NULL,
+  accepted_at_ms    INTEGER,
+  opener_wamid      TEXT,
+  opener_read_at_ms INTEGER,
+  confirmed_at_ms   INTEGER
+);
+CREATE INDEX IF NOT EXISTS wa_threads_number ON wa_threads (number_id, owner_phone);
+CREATE INDEX IF NOT EXISTS wa_threads_opener ON wa_threads (opener_wamid);
+
+-- Last time the owner wrote to a number (Meta's 24-hour free-text window).
+CREATE TABLE IF NOT EXISTS wa_windows (
+  number_id       TEXT NOT NULL,
+  owner_phone     TEXT NOT NULL,
+  last_inbound_ms INTEGER NOT NULL,
+  PRIMARY KEY (number_id, owner_phone)
+);
+
+-- Owner replies waiting for a "Which customer?" tap; allowed is a JSON array of provider_refs.
+CREATE TABLE IF NOT EXISTS wa_pending (
+  prompt_wamid  TEXT PRIMARY KEY,
+  orig_wamid    TEXT NOT NULL UNIQUE,
+  text          TEXT NOT NULL,
+  sent_at_ms    INTEGER,
+  number_id     TEXT NOT NULL,
+  allowed       TEXT NOT NULL,
+  expires_at_ms INTEGER NOT NULL,
+  consumed      INTEGER NOT NULL DEFAULT 0
+);
 `;
+
+/** Pending prompts are kept this long past expiry, so a tap Meta redelivers late still reads as consumed or expired. */
+const PENDING_KEEP_MS = 7 * 24 * 3_600_000;
+
+/** Two-way threads with no wa_threads row: opened before the pool existed. They count on the primary number. */
+const PRE_POOL = "t.mode = 'two_way' AND NOT EXISTS (SELECT 1 FROM wa_threads w WHERE w.thread_id = t.thread_id)";
+const BUSY_OUTBOX = "EXISTS (SELECT 1 FROM owner_outbox o WHERE o.thread_id = t.thread_id AND o.state IN ('queued', 'sending'))";
+
+interface NumberUse {
+  used: number;
+  open: number;
+  released: number | null;
+  busy: number;
+}
 
 export type ThreadState = "awaiting_owner" | "answered" | "closed";
 /** two_way: replies come back in-band (Slack thread). one_way: notify only, the owner contacts the customer directly. */
@@ -746,48 +805,164 @@ export class Store implements WhatsappPoolStore {
 
   // ---- WhatsApp number pool (src/connectors/whatsapp-pool.ts) ----
 
-  waAssign(_q: { thread_id: string; owner_phone: string; pool: string[]; now_ms: number }): WaAssignment {
-    throw new Error("not implemented");
+  waAssign(q: { thread_id: string; owner_phone: string; pool: string[]; now_ms: number }): WaAssignment {
+    return this.tx(() => {
+      const had = this.db.prepare("SELECT number_id, reused FROM wa_threads WHERE thread_id = ?").get(q.thread_id) as Raw | undefined;
+      if (had) return { number_id: had.number_id as string, reused: Number(had.reused) === 1 };
+
+      const onNumber = this.db.prepare(
+        `SELECT COUNT(*) AS used, COALESCE(SUM(t.state != 'closed'), 0) AS open, MAX(t.closed_at_ms) AS released,
+           COALESCE(MAX(${BUSY_OUTBOX}), 0) AS busy
+         FROM wa_threads w JOIN threads t ON t.thread_id = w.thread_id
+         WHERE w.number_id = ? AND w.owner_phone = ?`,
+      );
+      // The thread being assigned has no row yet (and its own opener is in the outbox): it is not pre-pool history.
+      const prePool = this.db
+        .prepare(
+          `SELECT COUNT(*) AS used, COALESCE(SUM(t.state != 'closed'), 0) AS open, MAX(t.closed_at_ms) AS released,
+             COALESCE(MAX(${BUSY_OUTBOX}), 0) AS busy
+           FROM threads t WHERE ${PRE_POOL} AND t.thread_id != ?`,
+        )
+        .get(q.thread_id) as unknown as NumberUse;
+      const windowAt = this.db.prepare("SELECT last_inbound_ms FROM wa_windows WHERE number_id = ? AND owner_phone = ?");
+
+      const stats = q.pool.map((number_id, i) => {
+        const u = onNumber.get(number_id, q.owner_phone) as unknown as NumberUse;
+        const pre: NumberUse = i === 0 ? prePool : { used: 0, open: 0, released: null, busy: 0 };
+        const used = Number(u.used) + Number(pre.used) > 0;
+        const open = Number(u.open) + Number(pre.open);
+        const rel = [u.released, pre.released].filter((v) => v !== null).map(Number);
+        const released = rel.length ? Math.max(...rel) : null;
+        const busy = Number(u.busy) + Number(pre.busy) > 0;
+        const w = windowAt.get(number_id, q.owner_phone) as Raw | undefined;
+        const free = open === 0 && !busy && (!used || released === null || q.now_ms - released >= RELEASE_HOLD_MS);
+        return { number_id, i, used, open, released: released ?? 0, free, window: w ? Number(w.last_inbound_ms) : -1 };
+      });
+
+      const free = stats
+        .filter((s) => s.free)
+        .sort((a, b) => Number(a.used) - Number(b.used) || (a.used ? a.released - b.released : 0) || b.window - a.window || a.i - b.i);
+      // No free number: overflow onto the busiest chat (ties to pool order, so the primary first).
+      const pick = free[0] ?? [...stats].sort((a, b) => b.open - a.open || a.i - b.i)[0];
+      if (!pick) throw new Error("waAssign: empty pool");
+      this.db
+        .prepare("INSERT INTO wa_threads (thread_id, number_id, owner_phone, reused, assigned_at_ms) VALUES (?, ?, ?, ?, ?)")
+        .run(q.thread_id, pick.number_id, q.owner_phone, pick.used ? 1 : 0, q.now_ms);
+      return { number_id: pick.number_id, reused: pick.used };
+    });
   }
 
-  waNumberForRef(_providerRef: string): string | null {
-    throw new Error("not implemented");
+  waNumberForRef(providerRef: string): string | null {
+    const r = (this.db.prepare("SELECT number_id FROM wa_threads WHERE opener_wamid = ?").get(providerRef) ??
+      this.db
+        .prepare("SELECT w.number_id FROM threads t JOIN wa_threads w ON w.thread_id = t.thread_id WHERE t.provider_ref = ?")
+        .get(providerRef)) as Raw | undefined;
+    return r ? (r.number_id as string) : null;
   }
 
-  waOpenOn(_q: { number_id: string; owner_phone: string; is_primary: boolean }): WaOpenThread[] {
-    throw new Error("not implemented");
+  waOpenOn(q: { number_id: string; owner_phone: string; is_primary: boolean }): WaOpenThread[] {
+    const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+    const rows = (
+      this.db
+        .prepare(
+          `SELECT t.thread_id, t.provider_ref, w.reused, w.accepted_at_ms, w.opener_read_at_ms, w.confirmed_at_ms
+           FROM wa_threads w JOIN threads t ON t.thread_id = w.thread_id
+           WHERE w.number_id = ? AND w.owner_phone = ? AND t.state != 'closed'
+           ORDER BY w.assigned_at_ms, t.thread_id`,
+        )
+        .all(q.number_id, q.owner_phone) as Raw[]
+    ).map(
+      (r): WaOpenThread => ({
+        thread_id: r.thread_id as string,
+        provider_ref: (r.provider_ref as string | null) ?? null,
+        reused: Number(r.reused) === 1,
+        accepted_at_ms: num(r.accepted_at_ms),
+        opener_read_at_ms: num(r.opener_read_at_ms),
+        confirmed_at_ms: num(r.confirmed_at_ms),
+      }),
+    );
+    if (!q.is_primary) return rows;
+    // Pre-pool threads share the primary's chat with older conversations: reused, never confirmed.
+    const pre = (
+      this.db.prepare(`SELECT t.thread_id, t.provider_ref FROM threads t WHERE t.state != 'closed' AND ${PRE_POOL} ORDER BY t.created_at, t.thread_id`).all() as Raw[]
+    ).map(
+      (r): WaOpenThread => ({
+        thread_id: r.thread_id as string,
+        provider_ref: (r.provider_ref as string | null) ?? null,
+        reused: true,
+        accepted_at_ms: null,
+        opener_read_at_ms: null,
+        confirmed_at_ms: null,
+      }),
+    );
+    return [...pre, ...rows];
   }
 
-  waMarkAccepted(_threadId: string, _openerWamid: string, _atMs: number): void {
-    throw new Error("not implemented");
+  waMarkAccepted(threadId: string, openerWamid: string, atMs: number): void {
+    this.db.prepare("UPDATE wa_threads SET accepted_at_ms = ?, opener_wamid = ? WHERE thread_id = ?").run(atMs, openerWamid, threadId);
   }
 
-  waMarkRead(_openerWamid: string, _atMs: number): void {
-    throw new Error("not implemented");
+  waMarkRead(openerWamid: string, atMs: number): void {
+    this.db.prepare("UPDATE wa_threads SET opener_read_at_ms = ? WHERE opener_wamid = ? AND opener_read_at_ms IS NULL").run(atMs, openerWamid);
   }
 
-  waConfirm(_threadId: string, _atMs: number): void {
-    throw new Error("not implemented");
+  waConfirm(threadId: string, atMs: number): void {
+    this.db.prepare("UPDATE wa_threads SET confirmed_at_ms = ? WHERE thread_id = ? AND confirmed_at_ms IS NULL").run(atMs, threadId);
   }
 
-  waTouchWindow(_numberId: string, _ownerPhone: string, _atMs: number): void {
-    throw new Error("not implemented");
+  waTouchWindow(numberId: string, ownerPhone: string, atMs: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO wa_windows (number_id, owner_phone, last_inbound_ms) VALUES (?, ?, ?)
+         ON CONFLICT (number_id, owner_phone) DO UPDATE SET last_inbound_ms = MAX(last_inbound_ms, excluded.last_inbound_ms)`,
+      )
+      .run(numberId, ownerPhone, atMs);
   }
 
-  waPutPending(_p: WaPending): void {
-    throw new Error("not implemented");
+  waPutPending(p: WaPending): void {
+    // Drop prompts long past expiry (the put time is expiry minus the TTL).
+    this.db.prepare("DELETE FROM wa_pending WHERE expires_at_ms < ?").run(p.expires_at_ms - PENDING_TTL_MS - PENDING_KEEP_MS);
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO wa_pending (prompt_wamid, orig_wamid, text, sent_at_ms, number_id, allowed, expires_at_ms, consumed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+      )
+      .run(p.prompt_wamid, p.orig_wamid, p.text, p.sent_at_ms, p.number_id, JSON.stringify(p.allowed), p.expires_at_ms);
   }
 
-  waHasPending(_origWamid: string): boolean {
-    throw new Error("not implemented");
+  waHasPending(origWamid: string): boolean {
+    return this.db.prepare("SELECT 1 AS x FROM wa_pending WHERE orig_wamid = ?").get(origWamid) !== undefined;
   }
 
-  waTakePending(_q: { prompt_wamid: string; chosen_ref: string; number_id: string; now_ms: number }): WaTakeResult {
-    throw new Error("not implemented");
+  waTakePending(q: { prompt_wamid: string; chosen_ref: string; number_id: string; now_ms: number }): WaTakeResult {
+    return this.tx(() => {
+      const r = this.db.prepare("SELECT * FROM wa_pending WHERE prompt_wamid = ?").get(q.prompt_wamid) as Raw | undefined;
+      if (!r) return { ok: false, reason: "unknown" };
+      if (Number(r.consumed) === 1) return { ok: false, reason: "consumed" };
+      const pending: WaPending = {
+        prompt_wamid: r.prompt_wamid as string,
+        orig_wamid: r.orig_wamid as string,
+        text: r.text as string,
+        sent_at_ms: r.sent_at_ms === null || r.sent_at_ms === undefined ? null : Number(r.sent_at_ms),
+        number_id: r.number_id as string,
+        allowed: JSON.parse(r.allowed as string) as string[],
+        expires_at_ms: Number(r.expires_at_ms),
+      };
+      if (pending.number_id !== q.number_id || !pending.allowed.includes(q.chosen_ref)) return { ok: false, reason: "not_allowed" };
+      if (q.now_ms >= pending.expires_at_ms) return { ok: false, reason: "expired" };
+      this.db.prepare("UPDATE wa_pending SET consumed = 1 WHERE prompt_wamid = ?").run(q.prompt_wamid);
+      return { ok: true, pending };
+    });
   }
 
-  waOrphanNumbers(_pool: string[], _ownerPhone: string): string[] {
-    throw new Error("not implemented");
+  waOrphanNumbers(pool: string[], ownerPhone: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT w.number_id FROM wa_threads w JOIN threads t ON t.thread_id = w.thread_id
+         WHERE w.owner_phone = ? AND t.state != 'closed' ORDER BY w.number_id`,
+      )
+      .all(ownerPhone) as Raw[];
+    return rows.map((r) => r.number_id as string).filter((n) => !pool.includes(n));
   }
 }
 
