@@ -576,14 +576,14 @@ const defaultSquareFactory: SquareCheckFactory = (o) => new SquareConnector(o);
 export async function squareAuthorize(app: { appId: string; appSecret: string; env: SquareEnv }, port: number, oauth: SquareOAuth, log: (m: string) => void): Promise<SquareTokens> {
   const state = newState();
   const url = authorizeUrl(app, state);
-  const pending = oauth.waitForCallback(port, state);
+  const pending = oauth.waitForCallback(port, state, undefined, (why) => log(`Ignored a ${why}. Use the link above; still waiting ...`));
   pending.catch(() => {}); // surfaced below
   if (app.env === "sandbox") {
     log("\nSandbox: Square shows a blank page unless the seller test account is already open in this browser.");
     log("In the Developer Console go to Sandbox test accounts and click Open on the test account first, then use the link.");
   }
   log(`\nOpen this link, sign in as the Square seller and click Allow (asks for: ${SQUARE_SCOPES.join(", ")}):\n\n  ${url}\n`);
-  log(`Waiting for Square to redirect to ${callbackUrl(port)} ...`);
+  log(`Waiting for Square to redirect to ${callbackUrl(port)} ... (keep this running: the page only answers while this line is showing)`);
   oauth.open(url);
   const code = await pending;
   return oauth.obtainToken(app, code, undefined);
