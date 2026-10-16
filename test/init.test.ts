@@ -5,7 +5,7 @@ import { parseEnv } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { EXISTING_ITEMS, GOAL_ITEMS, GOOGLE_SETUP_STEPS, INTRO, READY_ITEMS, buildEnvFile, guideUrl, parseHours, renderHours, runInit, validGlossGeniusUrl } from "../src/cli/init.js";
-import { validWhatsappPhone, validWhatsappPhoneId } from "../src/cli/init-channel.js";
+import { checkWhatsapp, validWhatsappPhone, validWhatsappPhoneId, type WhatsappAnswer } from "../src/cli/init-channel.js";
 import { FakeCalendarConnector } from "./helpers/fake-calendar.js";
 import { ScriptedPrompter } from "./helpers/scripted-prompter.js";
 
@@ -859,5 +859,61 @@ describe("init helpers", () => {
     const parsed = parseEnv(buildEnvFile(undefined, 3000, carried));
     for (const [k, v] of Object.entries(carried)) expect(parsed[k], k).toBe(v);
     expect(() => buildEnvFile(undefined, 3000, { BAD: `' " \`` })).toThrow(/BAD/);
+  });
+});
+
+describe("init wizard: WhatsApp number pool", () => {
+  const POOL_FLAGS = ["--owner-phone", "+12025550199", "--whatsapp-token", "EAAx", "--whatsapp-app-secret", "sec"];
+  const base = {
+    env: { SQUARE_ACCESS_TOKEN: "at", SQUARE_LOCATION_ID: "L1" },
+    makeSquare: () => ({ checkAccess: async () => {}, listServices: async () => [] }),
+  };
+
+  it("writes a comma list of Phone number IDs normalised, and checks each number", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-pool-"));
+    const probed: string[] = [];
+    const logs: string[] = [];
+    const code = await runInit(["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", ...POOL_FLAGS, "--whatsapp-phone-id", "123, 456"], {
+      ...base,
+      makeWhatsapp: (a) => ({ checkAccess: async () => void probed.push(a.phoneNumberId) }),
+      log: (m) => logs.push(m),
+    });
+    expect(code).toBe(0);
+    expect(parseEnv(readFileSync(join(dir, ".env"), "utf8")).WHATSAPP_PHONE_NUMBER_ID).toBe("123,456");
+    expect(probed).toEqual(["123", "456"]);
+    expect(logs.join("\n")).toContain("WhatsApp access OK for all 2 numbers");
+  });
+
+  it("refuses a non-numeric element in the list and writes nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-init-pool2-"));
+    const logs: string[] = [];
+    const code = await runInit(["--non-interactive", "--dir", dir, "--name", "Foyer", "--square", ...POOL_FLAGS, "--whatsapp-phone-id", "123,+1 202 555 0199"], {
+      ...base,
+      log: (m) => logs.push(m),
+    });
+    expect(code).toBe(1);
+    expect(logs.join("\n")).toMatch(/must be numeric Phone number IDs.*\("\+1 202 555 0199"\)/);
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+    expect(validWhatsappPhoneId(" 123 ,456,123, ")).toBe("123,456");
+    expect(() => validWhatsappPhoneId("123,abc")).toThrow(/must be numeric Phone number IDs/);
+  });
+
+  it("checkWhatsapp probes every number and fails when one of them fails", async () => {
+    const a: WhatsappAnswer = { phone: "+12025550199", accessToken: "EAAx", phoneNumberId: "111,222,333", appSecret: "sec", verifyToken: "v" };
+    const probed: string[] = [];
+    const logs: string[] = [];
+    const ok = await checkWhatsapp(
+      a,
+      (one) => ({
+        checkAccess: async () => {
+          probed.push(one.phoneNumberId);
+          if (one.phoneNumberId === "222") throw new Error("WhatsApp 100: WHATSAPP_PHONE_NUMBER_ID is wrong");
+        },
+      }),
+      (m) => logs.push(m),
+    );
+    expect(ok).toBe(false);
+    expect(probed).toEqual(["111", "222", "333"]);
+    expect(logs.join("\n")).toContain("WhatsApp check FAILED for 222: WhatsApp 100");
   });
 });

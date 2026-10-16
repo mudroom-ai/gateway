@@ -200,7 +200,9 @@ Options (env fallback in brackets, used with --non-interactive):
                            on the owner's WhatsApp, answered by quoting the message. Meta Cloud API access
                            token [WHATSAPP_ACCESS_TOKEN]; needs --owner-phone and a public HTTPS URL for
                            Meta's webhook (PUBLIC_URL, printed with the verify token after setup)
-  --whatsapp-phone-id <id> Phone number ID of the sending number [WHATSAPP_PHONE_NUMBER_ID]
+  --whatsapp-phone-id <id> Phone number ID of the sending number [WHATSAPP_PHONE_NUMBER_ID]. One or more,
+                           comma-separated, for one chat per customer: a number pool on the same WhatsApp
+                           Business Account, the first is the primary (e.g. 123,456)
   --whatsapp-app-secret <s> The Meta app's App Secret, which signs webhook deliveries [WHATSAPP_APP_SECRET]
   --whatsapp-verify-token <t> Webhook verify token [WHATSAPP_VERIFY_TOKEN] (generated when omitted)
   --whatsapp-template <n>  Optional approved template, name or name:lang, for messages outside the

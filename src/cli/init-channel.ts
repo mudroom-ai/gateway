@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { createSlackChannel, type SlackChannel } from "../connectors/slack.js";
 import { createTwilioChannel } from "../connectors/twilio.js";
 import { createWhatsappChannel, waNumber, WHATSAPP_WEBHOOK_PATH, type WhatsappChannel } from "../connectors/whatsapp.js";
+import { parsePhoneNumberIds } from "../connectors/whatsapp-pool.js";
 import { showGuide, type GuideIO, type SetupGuide } from "./guide.js";
 import type { Prompter } from "./init.js";
 import { style } from "./picker.js";
@@ -33,6 +34,7 @@ export interface SlackAnswer {
 export interface WhatsappAnswer {
   phone: string;
   accessToken: string;
+  /** One or more Phone number IDs, comma-separated with no spaces; the first is the primary. */
   phoneNumberId: string;
   appSecret: string;
   verifyToken: string;
@@ -68,21 +70,23 @@ export function slackAnswer(o: { bot?: string | undefined; app?: string | undefi
 export const newVerifyToken = () => randomBytes(16).toString("hex");
 
 /**
- * The WhatsApp answers or none, with createWhatsappChannel's checks (partial set, a phone number where the
- * Phone number ID should be). A missing verify token is generated: it is the gateway's own secret, not Meta's.
+ * The WhatsApp answers or none, with createWhatsappChannel's checks (partial set, owner phone). The Phone number ID
+ * may be a pool (comma list): parsePhoneNumberIds checks and normalises it here, and the connector check sees only
+ * the primary id. A missing verify token is generated: it is the gateway's own secret, not Meta's.
  */
 export function whatsappAnswer(o: { phone?: string | undefined; token?: string | undefined; phoneId?: string | undefined; secret?: string | undefined; verify?: string | undefined; template?: string | undefined }): WhatsappAnswer | undefined {
   const anySet = !!(trim(o.token) || trim(o.phoneId) || trim(o.secret));
+  const ids = trim(o.phoneId) ? parsePhoneNumberIds(o.phoneId) : undefined; // throws on a non-numeric element
   const settings = {
     owner_phone: trim(o.phone),
     whatsapp_access_token: trim(o.token),
-    whatsapp_phone_number_id: trim(o.phoneId),
+    whatsapp_phone_number_id: ids?.[0],
     whatsapp_app_secret: trim(o.secret),
     whatsapp_verify_token: trim(o.verify) ?? (anySet ? newVerifyToken() : undefined),
     whatsapp_template: trim(o.template),
   };
   if (!createWhatsappChannel(settings)) return undefined; // throws on a partial set
-  return { phone: settings.owner_phone!, accessToken: settings.whatsapp_access_token!, phoneNumberId: settings.whatsapp_phone_number_id!, appSecret: settings.whatsapp_app_secret!, verifyToken: settings.whatsapp_verify_token!, template: settings.whatsapp_template };
+  return { phone: settings.owner_phone!, accessToken: settings.whatsapp_access_token!, phoneNumberId: ids!.join(","), appSecret: settings.whatsapp_app_secret!, verifyToken: settings.whatsapp_verify_token!, template: settings.whatsapp_template };
 }
 
 /** .env lines for the channel answers (Slack first: it wins at runtime when both are set). */
@@ -183,11 +187,8 @@ export const validWhatsappPhone = (s: string) => {
   if (!/^\d{5,}$/.test(waNumber(v))) throw new Error("OWNER_PHONE must be the owner's WhatsApp number with country code, e.g. +1 202 555 0199");
   return v;
 };
-export const validWhatsappPhoneId = (s: string) => {
-  const v = required("Phone number ID")(s);
-  if (!/^\d+$/.test(v)) throw new Error("WHATSAPP_PHONE_NUMBER_ID must be the numeric Phone number ID from Meta app > WhatsApp > API Setup, not the phone number");
-  return v;
-};
+/** One or more Phone number IDs (a pool gives one chat per customer); returns them normalised, joined with ",". */
+export const validWhatsappPhoneId = (s: string) => parsePhoneNumberIds(required("Phone number ID")(s)).join(",");
 
 /** What a merchant needs before the wizard can connect each owner channel. */
 export const CHANNEL_GUIDES: Record<"slack" | "whatsapp" | "twilio", SetupGuide> = {
@@ -274,7 +275,7 @@ export async function askOwnerChannel(
     return {
       whatsapp: whatsappAnswer({
         phone: await askValid(p, "Your WhatsApp number (e.g. +1 202 555 0199)", f["owner-phone"] ?? known("OWNER_PHONE"), validWhatsappPhone),
-        phoneId: await askValid(p, "Phone number ID (WhatsApp -> API Setup; a number, not the phone number)", f["whatsapp-phone-id"] ?? known("WHATSAPP_PHONE_NUMBER_ID"), validWhatsappPhoneId),
+        phoneId: await askValid(p, "Phone number ID (WhatsApp -> API Setup; a number, not the phone number; one or more, comma-separated, for one chat per customer)", f["whatsapp-phone-id"] ?? known("WHATSAPP_PHONE_NUMBER_ID"), validWhatsappPhoneId),
         token: await askValid(p, "Access token", f["whatsapp-token"] ?? tokenSaved, required("Access token"), tokenSaved && !f["whatsapp-token"] ? "from .env" : undefined),
         secret: await askValid(p, "App Secret (App settings -> Basic)", f["whatsapp-app-secret"] ?? secretSaved, required("App Secret"), secretSaved && !f["whatsapp-app-secret"] ? "from .env" : undefined),
         verify: f["whatsapp-verify-token"] ?? known("WHATSAPP_VERIFY_TOKEN"),
@@ -315,6 +316,7 @@ export async function checkSlack(a: SlackAnswer, make: SlackCheckFactory, log: (
   }
 }
 
+/** Builds a checker for one number: the answer it gets carries a single Phone number ID. */
 export type WhatsappCheckFactory = (a: WhatsappAnswer) => Pick<WhatsappChannel, "checkAccess">;
 
 export const defaultWhatsappFactory: WhatsappCheckFactory = (a) =>
@@ -331,16 +333,27 @@ export function whatsappWebhookLines(a: WhatsappAnswer, publicUrl: string | unde
   ];
 }
 
-/** Runs the WhatsApp startup check and prints the hint on failure. Never throws: the files are already written. */
+/**
+ * Runs the WhatsApp startup check for every number in the pool (one probe per Phone number ID) and prints the hint
+ * on failure. Never throws: the files are already written.
+ */
 export async function checkWhatsapp(a: WhatsappAnswer, make: WhatsappCheckFactory, log: (m: string) => void): Promise<boolean> {
-  log(`\nChecking WhatsApp access (phone number ID ${a.phoneNumberId}) ...`);
-  try {
-    await make(a).checkAccess();
-    log("WhatsApp access OK. Agent messages will arrive on your phone; swipe to reply on one to answer it.");
-    return true;
-  } catch (e) {
-    log(`WhatsApp check FAILED: ${(e as Error).message}`);
+  const ids = parsePhoneNumberIds(a.phoneNumberId);
+  log(`\nChecking WhatsApp access (phone number ID${ids.length > 1 ? "s" : ""} ${ids.join(", ")}) ...`);
+  let failed = false;
+  for (const id of ids) {
+    try {
+      await make({ ...a, phoneNumberId: id }).checkAccess();
+    } catch (e) {
+      failed = true;
+      log(`WhatsApp check FAILED${ids.length > 1 ? ` for ${id}` : ""}: ${(e as Error).message}`);
+    }
+  }
+  if (failed) {
     log("Fix it in your Meta app (docs/connectors/whatsapp.md#errors), then re-run `npm run init` or `npm start`, which checks again.");
     return false;
   }
+  if (ids.length > 1) log(`WhatsApp access OK for all ${ids.length} numbers. Each customer gets their own chat on your phone (up to ${ids.length} at once); reply in that chat to answer.`);
+  else log("WhatsApp access OK. Agent messages will arrive on your phone; swipe to reply on one to answer it.");
+  return true;
 }
